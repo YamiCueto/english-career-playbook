@@ -28,7 +28,6 @@ export class SupabaseService {
         this.supabase = null;
       }
     } else {
-      // Offline / guest mode (expected in Sprint 0 until environment keys are set)
       this.supabase = null;
     }
   }
@@ -41,7 +40,21 @@ export class SupabaseService {
     return this.supabase !== null;
   }
 
+  get isAuthenticated(): boolean {
+    return this.currentUser !== null;
+  }
+
   get user(): User | null {
     return this.currentUser;
+  }
+
+  get syncStatusLabel(): string {
+    if (this.supabase && this.currentUser) {
+      return 'Supabase Sincronizado';
+    }
+    if (this.supabase) {
+      return 'Supabase Listo (Sin sesión)';
+    }
+    return 'Almacenamiento Local';
   }
 }
