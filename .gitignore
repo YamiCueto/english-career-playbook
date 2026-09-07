@@ -46,3 +46,8 @@ Thumbs.db
 .env.local
 .env.*.local
 src/environments/*.local.ts
+
+# Agent skills & tooling
+.agents/skills/
+skills-lock.json
+.hintrc
