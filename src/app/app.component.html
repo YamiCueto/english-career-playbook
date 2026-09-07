@@ -1,0 +1,85 @@
+<div class="app-layout">
+  <!-- Top Navbar -->
+  <header class="navbar">
+    <div class="nav-container">
+      <a routerLink="/dashboard" class="brand">
+        <div class="brand-icon">ECP</div>
+        <div class="brand-info">
+          <span class="brand-title">Career Playbook</span>
+          <span class="brand-sub">Functional English</span>
+        </div>
+      </a>
+
+      <!-- Desktop Nav -->
+      <nav class="nav-links">
+        <a routerLink="/dashboard" routerLinkActive="active" class="nav-link">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="7" height="7"></rect>
+            <rect x="14" y="3" width="7" height="7"></rect>
+            <rect x="14" y="14" width="7" height="7"></rect>
+            <rect x="3" y="14" width="7" height="7"></rect>
+          </svg>
+          Dashboard
+        </a>
+        <a routerLink="/practice" routerLinkActive="active" class="nav-link">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="4 7 4 4 20 4 20 7"></polyline>
+            <line x1="9" y1="20" x2="15" y2="20"></line>
+            <line x1="12" y1="4" x2="12" y2="20"></line>
+          </svg>
+          Laboratorio de Oraciones
+        </a>
+        <a routerLink="/playbook" routerLinkActive="active" class="nav-link">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+          </svg>
+          Playbook
+        </a>
+      </nav>
+
+      <!-- Status Indicator -->
+      <div class="nav-status">
+        <span class="status-indicator" [class.connected]="supabaseService.isConfigured"></span>
+        <span class="status-text">
+          {{ supabaseService.isConfigured ? 'Supabase Sync' : 'Local + Offline' }}
+        </span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content View Area -->
+  <main class="main-content">
+    <div class="content-container">
+      <router-outlet></router-outlet>
+    </div>
+  </main>
+
+  <!-- Mobile Bottom Tab Navigation -->
+  <nav class="mobile-nav">
+    <a routerLink="/dashboard" routerLinkActive="active" class="mobile-nav-item">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="3" y="3" width="7" height="7"></rect>
+        <rect x="14" y="3" width="7" height="7"></rect>
+        <rect x="14" y="14" width="7" height="7"></rect>
+        <rect x="3" y="14" width="7" height="7"></rect>
+      </svg>
+      <span>Dashboard</span>
+    </a>
+    <a routerLink="/practice" routerLinkActive="active" class="mobile-nav-item">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="4 7 4 4 20 4 20 7"></polyline>
+        <line x1="9" y1="20" x2="15" y2="20"></line>
+        <line x1="12" y1="4" x2="12" y2="20"></line>
+      </svg>
+      <span>Práctica</span>
+    </a>
+    <a routerLink="/playbook" routerLinkActive="active" class="mobile-nav-item">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+        <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+      </svg>
+      <span>Playbook</span>
+    </a>
+  </nav>
+</div>

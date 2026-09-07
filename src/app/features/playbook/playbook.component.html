@@ -1,0 +1,114 @@
+<div class="playbook-page">
+  <div class="page-header">
+    <div>
+      <div class="section-tag">Playbook Source</div>
+      <h1 class="page-title">Referencia Pedagógica</h1>
+      <p class="page-subtitle">Vocabulario esencial y banco de preguntas de entrevistas técnicas internacionales.</p>
+    </div>
+
+    <!-- Toggle View -->
+    <div class="view-tabs">
+      <button
+        type="button"
+        class="tab-btn"
+        [class.active]="activeTab === 'vocab'"
+        (click)="activeTab = 'vocab'"
+      >
+        Vocabulario Activo ({{ vocabulary.length }})
+      </button>
+      <button
+        type="button"
+        class="tab-btn"
+        [class.active]="activeTab === 'interview'"
+        (click)="activeTab = 'interview'"
+      >
+        Banco de Entrevistas ({{ questions.length }})
+      </button>
+    </div>
+  </div>
+
+  <!-- Tab 1: Vocabulary -->
+  @if (activeTab === 'vocab') {
+    <div class="tab-content">
+      <!-- Filter Bar -->
+      <div class="filter-bar">
+        <span class="filter-label">Filtrar categoría:</span>
+        <button
+          type="button"
+          class="filter-pill"
+          [class.active]="selectedCategory === 'all'"
+          (click)="selectedCategory = 'all'"
+        >
+          Todos
+        </button>
+        <button
+          type="button"
+          class="filter-pill"
+          [class.active]="selectedCategory === 'technical'"
+          (click)="selectedCategory = 'technical'"
+        >
+          Técnico
+        </button>
+        <button
+          type="button"
+          class="filter-pill"
+          [class.active]="selectedCategory === 'workplace'"
+          (click)="selectedCategory = 'workplace'"
+        >
+          Trabajo Diario
+        </button>
+        <button
+          type="button"
+          class="filter-pill"
+          [class.active]="selectedCategory === 'core'"
+          (click)="selectedCategory = 'core'"
+        >
+          Base
+        </button>
+      </div>
+
+      <!-- Vocabulary Grid -->
+      <div class="vocab-grid">
+        @for (item of filteredVocabulary; track item.english) {
+          <div class="vocab-card">
+            <div class="vocab-top">
+              <span class="vocab-word">{{ item.english }}</span>
+              <span class="vocab-category-tag" [ngClass]="item.category">{{ item.category }}</span>
+            </div>
+            <div class="vocab-meaning">{{ item.spanish }}</div>
+            <div class="vocab-example">
+              <span class="example-label">Ejemplo de uso:</span>
+              <p class="example-text">"{{ item.example }}"</p>
+            </div>
+          </div>
+        }
+      </div>
+    </div>
+  }
+
+  <!-- Tab 2: Interview Bank -->
+  @if (activeTab === 'interview') {
+    <div class="tab-content">
+      <div class="interview-list">
+        @for (q of questions; track q.id) {
+          <div class="question-card">
+            <div class="question-header">
+              <span class="q-number">#0{{ q.id }}</span>
+              <span class="q-badge" [ngClass]="q.category">{{ q.category }}</span>
+            </div>
+            <h3 class="question-text">{{ q.question }}</h3>
+            @if (q.referenceResponse) {
+              <div class="response-box">
+                <span class="response-badge">Respuesta inicial de referencia:</span>
+                <p class="response-text">{{ q.referenceResponse }}</p>
+                <span class="response-note">
+                  *Esta respuesta es un punto de partida para evolucionar hacia una versión espontánea.
+                </span>
+              </div>
+            }
+          </div>
+        }
+      </div>
+    </div>
+  }
+</div>

@@ -1,0 +1,149 @@
+<div class="practice-page">
+  <!-- Header & Pattern Selector -->
+  <div class="page-header">
+    <div>
+      <div class="section-tag">Laboratorio de Construcción</div>
+      <h1 class="page-title">Construir, no memorizar</h1>
+      <p class="page-subtitle">Practica activamente la estructura de oraciones profesionales en inglés.</p>
+    </div>
+
+    <!-- Pattern Tab Bar -->
+    <div class="pattern-tabs">
+      @for (pattern of patterns; track pattern.id) {
+        <button
+          type="button"
+          class="tab-btn"
+          [class.active]="pattern.id === selectedPattern.id"
+          (click)="selectPattern(pattern)"
+        >
+          {{ pattern.name.split(':')[0] }}
+        </button>
+      }
+    </div>
+  </div>
+
+  <!-- Active Pattern Details Card -->
+  <div class="pattern-card">
+    <div class="pattern-header">
+      <div>
+        <h2 class="pattern-title">{{ selectedPattern.name }}</h2>
+        <p class="pattern-explanation">{{ selectedPattern.explanation }}</p>
+      </div>
+      <div class="formula-pill">
+        <code>{{ selectedPattern.formula }}</code>
+      </div>
+    </div>
+
+    <!-- Quick Reference Examples -->
+    <div class="examples-tray">
+      <span class="examples-label">Ejemplos modelo (toca para cargar):</span>
+      <div class="examples-list">
+        @for (ex of selectedPattern.examples; track ex) {
+          <button type="button" class="example-chip" (click)="setExample(ex)">
+            "{{ ex }}"
+          </button>
+        }
+      </div>
+    </div>
+  </div>
+
+  <!-- Interactive Studio -->
+  <div class="studio-container">
+    <div class="studio-card">
+      <div class="studio-header">
+        <label for="sentenceInput" class="studio-label">{{ selectedPattern.practicePrompt }}</label>
+        <span class="char-hint">{{ userInput.length }} caracteres</span>
+      </div>
+
+      <!-- Verbs suggestion bar -->
+      <div class="verbs-bar">
+        <span class="verbs-title">Verbos sugeridos:</span>
+        @for (verb of selectedPattern.starterVerbs; track verb) {
+          <button type="button" class="verb-chip" (click)="insertVerb(verb)">
+            + {{ verb }}
+          </button>
+        }
+      </div>
+
+      <div class="input-wrapper">
+        <textarea
+          id="sentenceInput"
+          class="sentence-textarea"
+          rows="3"
+          placeholder="Escribe tu oración aquí en inglés... e.g. I work with Spring Boot and Angular."
+          [(ngModel)]="userInput"
+          (keydown.enter)="$event.preventDefault(); evaluateSentence()"
+        ></textarea>
+      </div>
+
+      <div class="studio-actions">
+        <button type="button" class="btn-clear" (click)="userInput = ''; validation = null">
+          Limpiar
+        </button>
+        <button type="button" class="btn btn-evaluate" (click)="evaluateSentence()">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="20 6 9 17 4 12"></polyline>
+          </svg>
+          Evaluar Oración
+        </button>
+      </div>
+
+      <!-- Validation Feedback Box -->
+      @if (validation) {
+        <div class="feedback-box" [ngClass]="validation.type">
+          <div class="feedback-icon">
+            @if (validation.type === 'success') {
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                <polyline points="22 4 12 14.01 9 11.01"></polyline>
+              </svg>
+            } @else if (validation.type === 'warning') {
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="8" x2="12" y2="12"></line>
+                <line x1="12" y1="16" x2="12.01" y2="16"></line>
+              </svg>
+            } @else {
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="15" y1="9" x2="9" y2="15"></line>
+                <line x1="9" y1="9" x2="15" y2="15"></line>
+              </svg>
+            }
+          </div>
+          <div class="feedback-content">
+            <div class="feedback-message">{{ validation.message }}</div>
+            @if (validation.hint) {
+              <div class="feedback-hint">{{ validation.hint }}</div>
+            }
+          </div>
+        </div>
+      }
+    </div>
+
+    <!-- History Card -->
+    <div class="history-card">
+      <h3 class="history-title">Historial de intentos (este patrón)</h3>
+      @if (attempts.length === 0) {
+        <div class="empty-history">
+          <p>Aún no has registrado intentos en este patrón.</p>
+          <span class="empty-sub">Escribe una oración arriba y presiona Evaluar.</span>
+        </div>
+      } @else {
+        <div class="attempts-list">
+          @for (attempt of attempts; track attempt.id) {
+            <div class="attempt-item" [class.attempt-valid]="attempt.isValid">
+              <div class="attempt-text">"{{ attempt.userInput }}"</div>
+              <div class="attempt-meta">
+                <span class="attempt-badge" [class.valid]="attempt.isValid">
+                  {{ attempt.isValid ? 'Correcta' : 'Ajuste requerido' }}
+                </span>
+                <span class="attempt-time">{{ attempt.timestamp | date:'shortTime' }}</span>
+              </div>
+            </div>
+          }
+        </div>
+      }
+    </div>
+  </div>
+</div>

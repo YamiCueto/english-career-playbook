@@ -1,0 +1,100 @@
+<div class="dashboard-page">
+  <!-- Hero Section -->
+  <section class="hero-banner">
+    <div class="hero-badge">
+      <span class="pulse-dot"></span>
+      Sprint 0 — Technical Foundation Active
+    </div>
+    <h1 class="hero-title">
+      English Career <span class="gradient-text">Playbook</span>
+    </h1>
+    <p class="hero-subtitle">
+      Desarrollando inglés funcional para la vida profesional, trabajo diario de ingeniería y entrevistas técnicas internacionales.
+    </p>
+
+    <div class="hero-actions">
+      <a routerLink="/practice" class="btn btn-primary">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polygon points="5 3 19 12 5 21 5 3"></polygon>
+        </svg>
+        Iniciar Laboratorio 01 (Patrón A)
+      </a>
+      <a routerLink="/playbook" class="btn btn-secondary">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+          <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+        </svg>
+        Consultar Playbook
+      </a>
+    </div>
+  </section>
+
+  <!-- Metrics Grid -->
+  <section class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-header">
+        <span class="stat-label">Construcción de Oraciones</span>
+        <span class="stat-icon emerald">🔤</span>
+      </div>
+      <div class="stat-value">{{ successfulAttemptsCount }} / {{ attempts.length }}</div>
+      <div class="stat-meta">Oraciones producidas sin memorizar</div>
+    </div>
+
+    <div class="stat-card">
+      <div class="stat-header">
+        <span class="stat-label">Banco de Patrones</span>
+        <span class="stat-icon blue">📐</span>
+      </div>
+      <div class="stat-value">{{ patternsCount }}</div>
+      <div class="stat-meta">Estructuras gramaticales activas</div>
+    </div>
+
+    <div class="stat-card">
+      <div class="stat-header">
+        <span class="stat-label">Vocabulario Técnico</span>
+        <span class="stat-icon amber">📚</span>
+      </div>
+      <div class="stat-value">{{ vocabularyCount }}</div>
+      <div class="stat-meta">Términos de ingeniería de software</div>
+    </div>
+
+    <div class="stat-card">
+      <div class="stat-header">
+        <span class="stat-label">Persistencia & RLS</span>
+        <span class="stat-icon purple">⚡</span>
+      </div>
+      <div class="stat-value" [class.text-emerald]="supabaseService.isConfigured">
+        {{ supabaseService.isConfigured ? 'Supabase Sync' : 'Local + Offline' }}
+      </div>
+      <div class="stat-meta">
+        {{ supabaseService.isConfigured ? 'Conectado a PostgreSQL con RLS' : 'Datos resguardados en navegador' }}
+      </div>
+    </div>
+  </section>
+
+  <!-- Learning Roadmap Preview -->
+  <section class="roadmap-section">
+    <div class="section-header">
+      <div>
+        <h2 class="section-title">Ruta de Aprendizaje Progresiva</h2>
+        <p class="section-subtitle">Del presente simple y la base cotidiana a la autonomía y el debate técnico sin notas.</p>
+      </div>
+      <span class="badge-phase">6 Fases Definidas</span>
+    </div>
+
+    <div class="phases-grid">
+      @for (phase of phases; track phase.phaseNumber) {
+        <div class="phase-card" [class.phase-card-active]="phase.phaseNumber === 1">
+          <div class="phase-number-badge">Fase {{ phase.phaseNumber }}</div>
+          <h3 class="phase-title">{{ phase.title }}</h3>
+          <p class="phase-desc">{{ phase.description }}</p>
+          <div class="phase-topics">
+            @for (topic of phase.focusTopics; track topic) {
+              <span class="topic-tag">{{ topic }}</span>
+            }
+          </div>
+        </div>
+      }
+    </div>
+  </section>
+</div>
