@@ -1,0 +1,137 @@
+[
+  {
+    "viewport": "360×800",
+    "name": "Mobile 360",
+    "route": "/#/dashboard",
+    "scrollWidth": 360,
+    "clientWidth": 360,
+    "hasHorizontalOverflow": false,
+    "screenshot": "reports/screenshots/360x800_dashboard.png"
+  },
+  {
+    "viewport": "360×800",
+    "name": "Mobile 360",
+    "route": "/#/practice",
+    "scrollWidth": 360,
+    "clientWidth": 360,
+    "hasHorizontalOverflow": false,
+    "screenshot": "reports/screenshots/360x800_practice.png"
+  },
+  {
+    "viewport": "360×800",
+    "name": "Mobile 360",
+    "route": "/#/playbook",
+    "scrollWidth": 360,
+    "clientWidth": 360,
+    "hasHorizontalOverflow": false,
+    "screenshot": "reports/screenshots/360x800_playbook.png"
+  },
+  {
+    "viewport": "390×844",
+    "name": "iPhone 390",
+    "route": "/#/dashboard",
+    "scrollWidth": 390,
+    "clientWidth": 390,
+    "hasHorizontalOverflow": false,
+    "screenshot": "reports/screenshots/390x844_dashboard.png"
+  },
+  {
+    "viewport": "390×844",
+    "name": "iPhone 390",
+    "route": "/#/practice",
+    "scrollWidth": 390,
+    "clientWidth": 390,
+    "hasHorizontalOverflow": false,
+    "screenshot": "reports/screenshots/390x844_practice.png"
+  },
+  {
+    "viewport": "390×844",
+    "name": "iPhone 390",
+    "route": "/#/playbook",
+    "scrollWidth": 390,
+    "clientWidth": 390,
+    "hasHorizontalOverflow": false,
+    "screenshot": "reports/screenshots/390x844_playbook.png"
+  },
+  {
+    "viewport": "412×915",
+    "name": "Pixel 412",
+    "route": "/#/dashboard",
+    "scrollWidth": 412,
+    "clientWidth": 412,
+    "hasHorizontalOverflow": false,
+    "screenshot": "reports/screenshots/412x915_dashboard.png"
+  },
+  {
+    "viewport": "412×915",
+    "name": "Pixel 412",
+    "route": "/#/practice",
+    "scrollWidth": 412,
+    "clientWidth": 412,
+    "hasHorizontalOverflow": false,
+    "screenshot": "reports/screenshots/412x915_practice.png"
+  },
+  {
+    "viewport": "412×915",
+    "name": "Pixel 412",
+    "route": "/#/playbook",
+    "scrollWidth": 412,
+    "clientWidth": 412,
+    "hasHorizontalOverflow": false,
+    "screenshot": "reports/screenshots/412x915_playbook.png"
+  },
+  {
+    "viewport": "768×1024",
+    "name": "Tablet 768",
+    "route": "/#/dashboard",
+    "scrollWidth": 768,
+    "clientWidth": 768,
+    "hasHorizontalOverflow": false,
+    "screenshot": "reports/screenshots/768x1024_dashboard.png"
+  },
+  {
+    "viewport": "768×1024",
+    "name": "Tablet 768",
+    "route": "/#/practice",
+    "scrollWidth": 768,
+    "clientWidth": 768,
+    "hasHorizontalOverflow": false,
+    "screenshot": "reports/screenshots/768x1024_practice.png"
+  },
+  {
+    "viewport": "768×1024",
+    "name": "Tablet 768",
+    "route": "/#/playbook",
+    "scrollWidth": 768,
+    "clientWidth": 768,
+    "hasHorizontalOverflow": false,
+    "screenshot": "reports/screenshots/768x1024_playbook.png"
+  },
+  {
+    "viewport": "1440×900",
+    "name": "Desktop 1440",
+    "route": "/#/dashboard",
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "hasHorizontalOverflow": false,
+    "screenshot": "reports/screenshots/1440x900_dashboard.png"
+  },
+  {
+    "viewport": "1440×900",
+    "name": "Desktop 1440",
+    "route": "/#/practice",
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "hasHorizontalOverflow": false,
+    "screenshot": "reports/screenshots/1440x900_practice.png"
+  },
+  {
+    "viewport": "1440×900",
+    "name": "Desktop 1440",
+    "route": "/#/playbook",
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "hasHorizontalOverflow": false,
+    "screenshot": "reports/screenshots/1440x900_playbook.png"
+  }
+]
