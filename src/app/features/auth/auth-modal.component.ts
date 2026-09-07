@@ -48,6 +48,8 @@ export class AuthModalComponent implements OnChanges, OnDestroy {
   @Output() closed = new EventEmitter<void>();
 
   private previousActiveElement: HTMLElement | null = null;
+  private focusTimer: ReturnType<typeof setTimeout> | null = null;
+  private operationGeneration = 0;
 
   readonly mode = signal<'signin' | 'signup'>('signin');
   readonly showPassword = signal<boolean>(false);
@@ -74,6 +76,8 @@ export class AuthModalComponent implements OnChanges, OnDestroy {
   ngOnChanges(changes: SimpleChanges): void {
     if (changes['isOpen']) {
       if (this.isOpen) {
+        this.clearFocusTimer();
+        ++this.operationGeneration;
         this.previousActiveElement = (document.activeElement as HTMLElement) || null;
         document.body.style.overflow = 'hidden';
         this.mode.set(this.initialMode);
@@ -81,8 +85,10 @@ export class AuthModalComponent implements OnChanges, OnDestroy {
         this.emailConfirmationSent.set(null);
         this.showPassword.set(false);
         this.showConfirmPassword.set(false);
-        setTimeout(() => this.focusInitialElement(), 50);
+        this.scheduleInitialFocus();
       } else {
+        this.clearFocusTimer();
+        ++this.operationGeneration;
         document.body.style.overflow = '';
         this.restorePreviousFocus();
       }
@@ -93,6 +99,8 @@ export class AuthModalComponent implements OnChanges, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.clearFocusTimer();
+    ++this.operationGeneration;
     document.body.style.overflow = '';
     this.restorePreviousFocus();
   }
@@ -144,6 +152,24 @@ export class AuthModalComponent implements OnChanges, OnDestroy {
     }
   }
 
+  private scheduleInitialFocus(): void {
+    this.clearFocusTimer();
+    this.focusTimer = setTimeout(() => {
+      this.focusTimer = null;
+      if (!this.isOpen) {
+        return;
+      }
+      this.focusInitialElement();
+    }, 50);
+  }
+
+  private clearFocusTimer(): void {
+    if (this.focusTimer !== null) {
+      clearTimeout(this.focusTimer);
+      this.focusTimer = null;
+    }
+  }
+
   private focusInitialElement(): void {
     if (!this.isOpen) {
       return;
@@ -162,17 +188,23 @@ export class AuthModalComponent implements OnChanges, OnDestroy {
   }
 
   private restorePreviousFocus(): void {
-    if (this.previousActiveElement && typeof this.previousActiveElement.focus === 'function') {
-      this.previousActiveElement.focus();
-    }
+    this.clearFocusTimer();
+    const elementToFocus = this.previousActiveElement;
     this.previousActiveElement = null;
+    if (elementToFocus && typeof elementToFocus.focus === 'function') {
+      queueMicrotask(() => {
+        elementToFocus.focus();
+      });
+    }
   }
 
   switchMode(target: 'signin' | 'signup'): void {
+    this.clearFocusTimer();
+    ++this.operationGeneration;
     this.mode.set(target);
     this.errorMessage.set(null);
     this.emailConfirmationSent.set(null);
-    setTimeout(() => this.focusInitialElement(), 50);
+    this.scheduleInitialFocus();
   }
 
   togglePasswordVisibility(): void {
@@ -184,6 +216,8 @@ export class AuthModalComponent implements OnChanges, OnDestroy {
   }
 
   close(): void {
+    this.clearFocusTimer();
+    ++this.operationGeneration;
     document.body.style.overflow = '';
     this.restorePreviousFocus();
     this.errorMessage.set(null);
@@ -205,6 +239,7 @@ export class AuthModalComponent implements OnChanges, OnDestroy {
       return;
     }
 
+    const opId = ++this.operationGeneration;
     this.isSubmitting.set(true);
     this.errorMessage.set(null);
 
@@ -212,15 +247,23 @@ export class AuthModalComponent implements OnChanges, OnDestroy {
 
     try {
       const result = await this.supabaseService.signIn(email, password);
+      if (this.operationGeneration !== opId || !this.isOpen) {
+        return;
+      }
       if (result.error) {
         this.errorMessage.set(this.translateAuthError(result.error.message));
         return;
       }
       this.close();
     } catch {
+      if (this.operationGeneration !== opId || !this.isOpen) {
+        return;
+      }
       this.errorMessage.set('No se pudo conectar con el servidor. Por favor intenta de nuevo.');
     } finally {
-      this.isSubmitting.set(false);
+      if (this.operationGeneration === opId) {
+        this.isSubmitting.set(false);
+      }
     }
   }
 
@@ -230,6 +273,7 @@ export class AuthModalComponent implements OnChanges, OnDestroy {
       return;
     }
 
+    const opId = ++this.operationGeneration;
     this.isSubmitting.set(true);
     this.errorMessage.set(null);
 
@@ -238,6 +282,9 @@ export class AuthModalComponent implements OnChanges, OnDestroy {
 
     try {
       const result = await this.supabaseService.signUp(email, password, nameToSubmit);
+      if (this.operationGeneration !== opId || !this.isOpen) {
+        return;
+      }
       if (result.error) {
         this.errorMessage.set(this.translateAuthError(result.error.message));
         return;
@@ -249,9 +296,14 @@ export class AuthModalComponent implements OnChanges, OnDestroy {
         this.emailConfirmationSent.set(email);
       }
     } catch {
+      if (this.operationGeneration !== opId || !this.isOpen) {
+        return;
+      }
       this.errorMessage.set('No se pudo conectar con el servidor. Por favor intenta de nuevo.');
     } finally {
-      this.isSubmitting.set(false);
+      if (this.operationGeneration === opId) {
+        this.isSubmitting.set(false);
+      }
     }
   }
 

@@ -183,7 +183,40 @@ describe('App', () => {
 
   it('should reflect error connection status when restorationError is set', () => {
     restorationErrorSignal.set('Failed to restore session');
-    expect(app.connectionStatus()).toBe('error');
-    expect(app.connectionLabel()).toBe('Sin Conexión');
+    expect(app.connectionStatus()).toBe('restoration-error');
+    expect(app.connectionLabel()).toBe('Error de Sesión');
+  });
+
+  it('should distinguish profileError from disconnection while authenticated', () => {
+    currentUserSignal.set(mockUser);
+    currentProfileSignal.set(null);
+    profileErrorSignal.set('Failed to fetch profile');
+
+    expect(app.connectionStatus()).toBe('profile-warning');
+    expect(app.connectionLabel()).toBe('Sesión Activa (Sin Perfil)');
+    expect(app.userDisplayName()).toBe('Yamid Cueto');
+  });
+
+  it('should handle remote signOut failure and show comprehensible alert', async () => {
+    mockSupabaseService.signOut.mockResolvedValueOnce({
+      error: { message: 'Remote network error' },
+    });
+
+    await app.handleSignOut();
+
+    expect(mockSupabaseService.signOut).toHaveBeenCalled();
+    expect(app.signOutError()).toContain('No se pudo revocar la sesión remota');
+
+    app.dismissSignOutError();
+    expect(app.signOutError()).toBeNull();
+  });
+
+  it('should ignore escape key when auth modal is open', () => {
+    app.isAuthModalOpen.set(true);
+    app.isUserMenuOpen.set(true);
+
+    app.handleEscape();
+
+    expect(app.isUserMenuOpen()).toBe(true);
   });
 });

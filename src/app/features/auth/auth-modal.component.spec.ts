@@ -274,4 +274,64 @@ describe('AuthModalComponent', () => {
     expect(component.errorMessage()).not.toContain('PGRST301');
     expect(component.errorMessage()).toContain('No se pudo completar la operación');
   });
+
+  it('should discard late signIn response if modal was closed before request completed', async () => {
+    let resolveSignIn!: (val: any) => void;
+    (mockSupabaseService.signIn as any).mockReturnValue(
+      new Promise((res) => {
+        resolveSignIn = res;
+      })
+    );
+
+    component.signInForm.patchValue({ email: 'late@domain.com', password: 'password123' });
+    const pendingPromise = component.handleSignIn();
+
+    component.close();
+
+    resolveSignIn({
+      data: { user: null, session: null },
+      error: new AuthError('Invalid login credentials'),
+    });
+
+    await pendingPromise;
+    expect(component.errorMessage()).toBeNull();
+  });
+
+  it('should discard late signUp response if modal was closed before request completed', async () => {
+    let resolveSignUp!: (val: any) => void;
+    (mockSupabaseService.signUp as any).mockReturnValue(
+      new Promise((res) => {
+        resolveSignUp = res;
+      })
+    );
+
+    component.switchMode('signup');
+    component.signUpForm.patchValue({
+      email: 'late@domain.com',
+      password: 'password123',
+      confirmPassword: 'password123',
+    });
+    const pendingPromise = component.handleSignUp();
+
+    component.close();
+
+    resolveSignUp({
+      data: { user: mockUser, session: null },
+      error: null,
+    });
+
+    await pendingPromise;
+    expect(component.emailConfirmationSent()).toBeNull();
+  });
+
+  it('should clean up scroll lock and timers on destroy', () => {
+    component.isOpen = true;
+    component.ngOnChanges({
+      isOpen: new SimpleChange(false, true, true),
+    });
+    expect(document.body.style.overflow).toBe('hidden');
+
+    component.ngOnDestroy();
+    expect(document.body.style.overflow).toBe('');
+  });
 });

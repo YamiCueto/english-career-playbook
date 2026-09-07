@@ -54,12 +54,20 @@ export class App {
     return this.supabaseService.currentUser()?.email || '';
   });
 
-  readonly connectionStatus = computed<'authenticated' | 'error' | 'guest'>(() => {
-    if (this.supabaseService.restorationError() || this.supabaseService.profileError()) {
-      return 'error';
-    }
+  readonly signOutError = signal<string | null>(null);
+
+  readonly connectionStatus = computed<'authenticated' | 'profile-warning' | 'restoration-error' | 'auth-error' | 'guest'>(() => {
     if (this.supabaseService.isAuthenticated) {
+      if (this.supabaseService.profileError()) {
+        return 'profile-warning';
+      }
       return 'authenticated';
+    }
+    if (this.supabaseService.restorationError()) {
+      return 'restoration-error';
+    }
+    if (this.supabaseService.authError() || this.signOutError()) {
+      return 'auth-error';
     }
     return 'guest';
   });
@@ -68,11 +76,15 @@ export class App {
     switch (this.connectionStatus()) {
       case 'authenticated':
         return 'Sesión Activa';
-      case 'error':
-        return 'Sin Conexión';
+      case 'profile-warning':
+        return 'Sesión Activa (Sin Perfil)';
+      case 'restoration-error':
+        return 'Error de Sesión';
+      case 'auth-error':
+        return 'Error de Conexión';
       case 'guest':
       default:
-        return 'Modo Invitado';
+        return this.supabaseService.isConfigured ? 'Modo Invitado' : 'Modo Local';
     }
   });
 
@@ -96,7 +108,15 @@ export class App {
 
   async handleSignOut(): Promise<void> {
     this.closeUserMenu();
-    await this.supabaseService.signOut();
+    this.signOutError.set(null);
+    const result = await this.supabaseService.signOut();
+    if (result.error) {
+      this.signOutError.set('No se pudo revocar la sesión remota en el servidor. Tu sesión local ha sido cerrada.');
+    }
+  }
+
+  dismissSignOutError(): void {
+    this.signOutError.set(null);
   }
 
   @HostListener('document:click', ['$event'])

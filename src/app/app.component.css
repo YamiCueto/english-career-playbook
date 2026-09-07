@@ -117,6 +117,11 @@
   box-shadow: 0 0 4px rgba(245, 158, 11, 0.4);
 }
 
+.status-indicator.warning {
+  background-color: var(--accent-amber);
+  box-shadow: 0 0 6px var(--accent-amber);
+}
+
 .status-indicator.connected {
   background-color: var(--accent-emerald);
   box-shadow: 0 0 6px var(--accent-emerald);
@@ -323,6 +328,42 @@
 .signout-btn:focus-visible {
   outline: 2px solid var(--accent-rose);
   outline-offset: 1px;
+}
+
+.signout-alert-banner {
+  background: rgba(244, 63, 94, 0.12);
+  border-bottom: 1px solid rgba(244, 63, 94, 0.3);
+  color: #fecdd3;
+  padding: 0.6rem 1rem;
+  font-size: 0.8rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+}
+
+.alert-content {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.alert-dismiss-btn {
+  color: #fecdd3;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+
+.alert-dismiss-btn:hover {
+  background: rgba(244, 63, 94, 0.2);
+  color: #ffffff;
 }
 
 .main-content {

@@ -41,8 +41,8 @@
           <span
             class="status-indicator"
             [class.connected]="connectionStatus() === 'authenticated'"
-            [class.error]="connectionStatus() === 'error'"
-            [class.guest]="connectionStatus() === 'guest'"
+            [class.warning]="connectionStatus() === 'profile-warning' || connectionStatus() === 'guest'"
+            [class.error]="connectionStatus() === 'restoration-error' || connectionStatus() === 'auth-error'"
             aria-hidden="true"
           ></span>
           <span class="status-text">
@@ -123,6 +123,23 @@
       </div>
     </div>
   </header>
+
+  <div *ngIf="signOutError() as err" class="signout-alert-banner" role="alert">
+    <div class="alert-content">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+        <circle cx="12" cy="12" r="10"></circle>
+        <line x1="12" y1="8" x2="12" y2="12"></line>
+        <line x1="12" y1="16" x2="12.01" y2="16"></line>
+      </svg>
+      <span>{{ err }}</span>
+    </div>
+    <button type="button" class="alert-dismiss-btn" (click)="dismissSignOutError()" aria-label="Cerrar aviso de error">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+        <line x1="18" y1="6" x2="6" y2="18"></line>
+        <line x1="6" y1="6" x2="18" y2="18"></line>
+      </svg>
+    </button>
+  </div>
 
   <main class="main-content">
     <div class="content-container">
