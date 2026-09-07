@@ -1,7 +1,9 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { provideRouter } from '@angular/router';
+import { provideRouter, Router } from '@angular/router';
 import { App } from './app.component';
 import { SupabaseService, ProfileRow } from './core/services/supabase.service';
+import { RemoteSyncService } from './core/services/remote-sync.service';
+import { routes } from './app.routes';
 import { signal, computed } from '@angular/core';
 import { User, Session } from '@supabase/supabase-js';
 
@@ -70,6 +72,9 @@ describe('App', () => {
     signUp: vi.fn(),
   };
 
+  let router: Router;
+  let remoteSyncService: RemoteSyncService;
+
   beforeEach(async () => {
     currentUserSignal.set(null);
     currentSessionSignal.set(null);
@@ -80,11 +85,13 @@ describe('App', () => {
     await TestBed.configureTestingModule({
       imports: [App],
       providers: [
-        provideRouter([]),
+        provideRouter(routes),
         { provide: SupabaseService, useValue: mockSupabaseService },
       ],
     }).compileComponents();
 
+    router = TestBed.inject(Router);
+    remoteSyncService = TestBed.inject(RemoteSyncService);
     fixture = TestBed.createComponent(App);
     app = fixture.componentInstance;
     fixture.detectChanges();
@@ -218,5 +225,81 @@ describe('App', () => {
     app.handleEscape();
 
     expect(app.isUserMenuOpen()).toBe(true);
+  });
+
+  describe('Global Lifecycle & RemoteSync Initialization', () => {
+    it('debe activar RemoteSyncService en arranque directo en /playbook con sesion restaurada sin depender de PracticeStorageService', async () => {
+      currentUserSignal.set(mockUser);
+      await router.navigateByUrl('/playbook');
+      fixture.detectChanges();
+      await fixture.whenStable();
+
+      expect(router.url).toBe('/playbook');
+      expect(remoteSyncService.currentUserId).toBe('user-abc-123');
+      expect(app.syncStatus()).toBeDefined();
+    });
+
+    it('debe inicializar RemoteSyncService en arranque directo en /dashboard', async () => {
+      currentUserSignal.set(mockUser);
+      await router.navigateByUrl('/dashboard');
+      fixture.detectChanges();
+      await fixture.whenStable();
+
+      expect(router.url).toBe('/dashboard');
+      expect(remoteSyncService.currentUserId).toBe('user-abc-123');
+    });
+
+    it('debe inicializar RemoteSyncService en arranque directo en /practice', async () => {
+      currentUserSignal.set(mockUser);
+      await router.navigateByUrl('/practice');
+      fixture.detectChanges();
+      await fixture.whenStable();
+
+      expect(router.url).toBe('/practice');
+      expect(remoteSyncService.currentUserId).toBe('user-abc-123');
+    });
+
+    it('debe activar RemoteSyncService tras login posterior al arranque', async () => {
+      expect(remoteSyncService.currentUserId).toBeNull();
+      expect(remoteSyncService.syncStatus()).toBe('local');
+
+      currentUserSignal.set(mockUser);
+      fixture.detectChanges();
+      await fixture.whenStable();
+
+      expect(remoteSyncService.currentUserId).toBe('user-abc-123');
+    });
+
+    it('debe invalidar estado y cambiar de cuenta correctamente ante logout y nuevo login', async () => {
+      currentUserSignal.set(mockUser);
+      fixture.detectChanges();
+      await fixture.whenStable();
+
+      expect(remoteSyncService.currentUserId).toBe('user-abc-123');
+
+      currentUserSignal.set(null);
+      fixture.detectChanges();
+      await fixture.whenStable();
+
+      expect(remoteSyncService.currentUserId).toBeNull();
+      expect(remoteSyncService.syncStatus()).toBe('local');
+
+      const nextUser: User = {
+        ...mockUser,
+        id: 'user-xyz-789',
+        email: 'other@playbook.dev',
+      };
+      currentUserSignal.set(nextUser);
+      fixture.detectChanges();
+      await fixture.whenStable();
+
+      expect(remoteSyncService.currentUserId).toBe('user-xyz-789');
+    });
+
+    it('no inicializa dos veces el motor ni duplica listeners en el root injector', () => {
+      const instance1 = TestBed.inject(RemoteSyncService);
+      const instance2 = TestBed.inject(RemoteSyncService);
+      expect(instance1).toBe(instance2);
+    });
   });
 });

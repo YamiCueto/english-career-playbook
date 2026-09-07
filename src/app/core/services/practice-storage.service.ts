@@ -1,20 +1,43 @@
 import { Injectable, inject } from '@angular/core';
 import { PracticeAttempt, SessionSummary } from '../models/session.model';
 import { SupabaseService } from './supabase.service';
-
-const ATTEMPTS_STORAGE_KEY = 'ecp_practice_attempts';
-const SESSIONS_STORAGE_KEY = 'ecp_sessions_history';
+import { StorageMigrationService } from './storage-migration.service';
+import { SyncQueueService } from './sync-queue.service';
+import { RemoteSyncService } from './remote-sync.service';
+import { generateUuidV4, isValidUuidV4 } from '../utils/uuid.util';
+import { getStorageNamespace, StorageNamespace } from '../models/sync.model';
 
 @Injectable({
   providedIn: 'root',
 })
 export class PracticeStorageService {
   private supabaseService = inject(SupabaseService);
+  private migrationService = inject(StorageMigrationService);
+  private queueService = inject(SyncQueueService);
+  private remoteSync = inject(RemoteSyncService);
+
+  readonly syncStatus = this.remoteSync.syncStatus;
+
+  constructor() {
+    this.migrationService.migrate();
+  }
+
+  get currentUserId(): string | null {
+    return this.supabaseService.currentUser()?.id ?? null;
+  }
+
+  get activeNamespace(): StorageNamespace {
+    return getStorageNamespace(this.currentUserId);
+  }
 
   getAttempts(): PracticeAttempt[] {
     try {
-      const raw = localStorage.getItem(ATTEMPTS_STORAGE_KEY);
-      return raw ? JSON.parse(raw) : [];
+      const raw = localStorage.getItem(this.activeNamespace.attemptsKey);
+      if (!raw) {
+        return [];
+      }
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
     } catch {
       return [];
     }
@@ -23,26 +46,19 @@ export class PracticeStorageService {
   saveAttempt(attempt: Omit<PracticeAttempt, 'id' | 'timestamp'>): PracticeAttempt {
     const newAttempt: PracticeAttempt = {
       ...attempt,
-      id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(),
+      id: generateUuidV4(),
       timestamp: new Date().toISOString(),
+      syncStatus: 'pending',
     };
 
     const existing = this.getAttempts();
-    const updated = [newAttempt, ...existing].slice(0, 100);
-    localStorage.setItem(ATTEMPTS_STORAGE_KEY, JSON.stringify(updated));
+    const updated = [newAttempt, ...existing.filter((a) => a.id !== newAttempt.id)].slice(0, 100);
+    localStorage.setItem(this.activeNamespace.attemptsKey, JSON.stringify(updated));
 
-    if (this.supabaseService.isConfigured && this.supabaseService.client && this.supabaseService.user) {
-      this.supabaseService.client
-        .from('practice_attempts')
-        .insert({
-          user_id: this.supabaseService.user.id,
-          pattern_id: newAttempt.patternId,
-          user_input: newAttempt.userInput,
-          feedback_status: newAttempt.isValid ? 'valid' : 'needs_review',
-        })
-        .then(({ error }) => {
-          if (error) console.error('Error syncing attempt to Supabase:', error);
-        });
+    this.queueService.enqueue(this.currentUserId, 'practice_attempt', newAttempt);
+
+    if (this.currentUserId) {
+      void this.remoteSync.requestSync();
     }
 
     return newAttempt;
@@ -50,16 +66,45 @@ export class PracticeStorageService {
 
   getSessions(): SessionSummary[] {
     try {
-      const raw = localStorage.getItem(SESSIONS_STORAGE_KEY);
-      return raw ? JSON.parse(raw) : [];
+      const raw = localStorage.getItem(this.activeNamespace.sessionsKey);
+      if (!raw) {
+        return [];
+      }
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
     } catch {
       return [];
     }
   }
 
   saveSession(session: SessionSummary): void {
+    const validatedId = isValidUuidV4(session.id) ? session.id : generateUuidV4();
+    const newSession: SessionSummary = {
+      ...session,
+      id: validatedId,
+      syncStatus: 'pending',
+    };
+
     const existing = this.getSessions();
-    const updated = [session, ...existing.filter((s) => s.id !== session.id)];
-    localStorage.setItem(SESSIONS_STORAGE_KEY, JSON.stringify(updated));
+    const updated = [newSession, ...existing.filter((s) => s.id !== newSession.id)];
+    localStorage.setItem(this.activeNamespace.sessionsKey, JSON.stringify(updated));
+
+    this.queueService.enqueue(this.currentUserId, 'session', newSession);
+
+    if (newSession.evaluation) {
+      this.queueService.enqueue(this.currentUserId, 'progress_evaluation', {
+        id: generateUuidV4(),
+        sessionId: newSession.id,
+        ...newSession.evaluation,
+      });
+    }
+
+    if (this.currentUserId) {
+      void this.remoteSync.requestSync();
+    }
+  }
+
+  getPendingQueueCount(): number {
+    return this.queueService.getQueue(this.currentUserId).length;
   }
 }
