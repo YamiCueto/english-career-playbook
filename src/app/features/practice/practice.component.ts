@@ -34,6 +34,10 @@ export class PracticeComponent {
     this.refreshAttempts();
   }
 
+  get placeholderText(): string {
+    return 'e.g. ' + this.selectedPattern.examples[0];
+  }
+
   selectPattern(pattern: SentencePattern): void {
     this.selectedPattern = pattern;
     this.userInput = '';
@@ -43,7 +47,11 @@ export class PracticeComponent {
 
   insertVerb(verb: string): void {
     if (!this.userInput.trim()) {
-      this.userInput = `I ${verb} `;
+      if (this.selectedPattern.id === 'pattern-e') {
+        this.userInput = `${verb} `;
+      } else {
+        this.userInput = `I ${verb} `;
+      }
     } else {
       this.userInput = `${this.userInput.trim()} ${verb} `;
     }
@@ -67,7 +75,6 @@ export class PracticeComponent {
 
     const lower = text.toLowerCase();
 
-    // 1. Diagnóstico de errores documentados en el Playbook
     if (lower.includes('i living')) {
       this.validation = {
         isValid: false,
@@ -134,7 +141,8 @@ export class PracticeComponent {
       return;
     }
 
-    // 2. Validación de estructura para el Patrón A (Sujeto + Verbo + Complemento)
+    const words = text.split(/\s+/);
+
     if (this.selectedPattern.id === 'pattern-a') {
       const startsWithSubject = /^i\s+/i.test(text) || /^we\s+/i.test(text);
       if (!startsWithSubject) {
@@ -147,8 +155,6 @@ export class PracticeComponent {
         this.saveAttempt(false, this.validation.message);
         return;
       }
-
-      const words = text.split(/\s+/);
       if (words.length < 3) {
         this.validation = {
           isValid: false,
@@ -159,9 +165,131 @@ export class PracticeComponent {
         this.saveAttempt(false, this.validation.message);
         return;
       }
+    } else if (this.selectedPattern.id === 'pattern-b') {
+      const hasExperiencePhrase =
+        lower.includes('have experience') ||
+        lower.includes('have worked') ||
+        lower.includes('specialize in');
+      if (!hasExperiencePhrase) {
+        this.validation = {
+          isValid: false,
+          message: 'El Patrón B requiere expresar experiencia o especialización.',
+          type: 'warning',
+          hint: 'Usa: "I have experience with...", "I have worked on..." o "I specialize in...".',
+        };
+        this.saveAttempt(false, this.validation.message);
+        return;
+      }
+      if (words.length < 4) {
+        this.validation = {
+          isValid: false,
+          message: 'Completa la oración indicando la tecnología o proyecto.',
+          type: 'warning',
+          hint: 'Ejemplo: "I have experience with Spring Boot and Angular".',
+        };
+        this.saveAttempt(false, this.validation.message);
+        return;
+      }
+    } else if (this.selectedPattern.id === 'pattern-c') {
+      const startsWithSubject = /^i\s+/i.test(text) || /^we\s+/i.test(text);
+      if (!startsWithSubject) {
+        this.validation = {
+          isValid: false,
+          message: 'El Patrón C inicia con sujeto ("I" o "We") y una acción en pasado.',
+          type: 'warning',
+          hint: 'Ejemplo: "I modernized a legacy system".',
+        };
+        this.saveAttempt(false, this.validation.message);
+        return;
+      }
+      const hasPastVerb =
+        /\b(modernized|developed|migrated|automated|implemented|designed|built|worked|created|led|fixed|helped|managed|configured|tested|wrote|set up)\b/i.test(
+          text
+        ) || /\w+ed\b/i.test(text);
+      if (!hasPastVerb) {
+        this.validation = {
+          isValid: false,
+          message: 'Usa un verbo en tiempo pasado para narrar lo que lograste en el proyecto.',
+          type: 'warning',
+          hint: 'Verbos sugeridos: modernized, developed, migrated, automated, implemented, designed.',
+        };
+        this.saveAttempt(false, this.validation.message);
+        return;
+      }
+      if (words.length < 3) {
+        this.validation = {
+          isValid: false,
+          message: 'Describe la acción y el componente o logro alcanzado.',
+          type: 'warning',
+          hint: 'Ejemplo: "I developed the backend services".',
+        };
+        this.saveAttempt(false, this.validation.message);
+        return;
+      }
+    } else if (this.selectedPattern.id === 'pattern-d') {
+      const hasIntent =
+        lower.includes('want to') ||
+        lower.includes('would like to') ||
+        lower.includes('planning to') ||
+        lower.includes('plan to') ||
+        lower.includes('aim to');
+      if (!hasIntent) {
+        this.validation = {
+          isValid: false,
+          message: 'El Patrón D requiere una expresión de intención o aspiración profesional.',
+          type: 'warning',
+          hint: 'Usa: "I want to...", "I would like to..." o "I am planning to...".',
+        };
+        this.saveAttempt(false, this.validation.message);
+        return;
+      }
+      if (words.length < 4) {
+        this.validation = {
+          isValid: false,
+          message: 'Completa la meta profesional después del verbo de intención.',
+          type: 'warning',
+          hint: 'Ejemplo: "I would like to work on global products".',
+        };
+        this.saveAttempt(false, this.validation.message);
+        return;
+      }
+    } else if (this.selectedPattern.id === 'pattern-e') {
+      const startsWithQuestionWord =
+        /^(could you|can you|would you|what|why|how|where|when|do you|are you)\b/i.test(
+          text
+        );
+      if (!startsWithQuestionWord) {
+        this.validation = {
+          isValid: false,
+          message: 'El Patrón E debe iniciar con una fórmula o palabra interrogativa.',
+          type: 'warning',
+          hint: 'Inicia con: "Could you...", "What...", "Why..." o "How...".',
+        };
+        this.saveAttempt(false, this.validation.message);
+        return;
+      }
+      if (!text.endsWith('?')) {
+        this.validation = {
+          isValid: false,
+          message: 'Recuerda finalizar tu pregunta con el signo de interrogación de cierre "?".',
+          type: 'warning',
+          hint: 'Ejemplo: Could you tell me more about the team?',
+        };
+        this.saveAttempt(false, this.validation.message);
+        return;
+      }
+      if (words.length < 3) {
+        this.validation = {
+          isValid: false,
+          message: 'Formula una pregunta completa para clarificar o indagar.',
+          type: 'warning',
+          hint: 'Ejemplo: "Could you repeat the question, please?"',
+        };
+        this.saveAttempt(false, this.validation.message);
+        return;
+      }
     }
 
-    // Aprobado
     this.validation = {
       isValid: true,
       message: '¡Excelente construcción! Cumple con la estructura del patrón sin los vicios habituales.',
