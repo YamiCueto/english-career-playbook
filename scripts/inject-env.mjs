@@ -25,6 +25,7 @@ const content = `export const environment = {
 `;
 
 fs.writeFileSync('src/environments/environment.ts', content, 'utf8');
+fs.writeFileSync('src/environments/environment.local.ts', content, 'utf8');
 
 if (url && key) {
   console.log(`Supabase environment injected successfully: url=${url}`);

@@ -7,7 +7,7 @@
     "build": "ng build",
     "build:gh-pages": "ng build --base-href /english-career-playbook/ && node scripts/copy-404.mjs",
     "watch": "ng build --watch --configuration development",
-    "test": "ng test",
+    "test": "node scripts/prepare-local-env.mjs && ng test",
     "audit:responsive": "node scripts/verify-responsive.mjs"
   },
   "private": true,

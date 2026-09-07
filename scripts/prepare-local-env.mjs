@@ -24,6 +24,9 @@ if (fs.existsSync(envLocalPath)) {
       }
     }
   }
+} else {
+  url = process.env.SUPABASE_URL ? process.env.SUPABASE_URL.trim() : '';
+  key = process.env.SUPABASE_ANON_KEY ? process.env.SUPABASE_ANON_KEY.trim() : '';
 }
 
 const content = `export const environment = {
