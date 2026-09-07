@@ -8,12 +8,12 @@ export interface PracticeAttempt {
 }
 
 export interface ProgressEvaluation {
-  comprehension: number; // 1-5
-  construction: number; // 1-5
-  vocabulary: number; // 1-5
-  fluency: number; // 1-5
-  grammar: number; // 1-5
-  pronunciation: number; // 1-5
+  comprehension: number;
+  construction: number;
+  vocabulary: number;
+  fluency: number;
+  grammar: number;
+  pronunciation: number;
   newWordsCount: number;
   nextGoal: string;
 }

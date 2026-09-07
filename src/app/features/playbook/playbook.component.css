@@ -56,7 +56,6 @@
   box-shadow: var(--shadow-sm);
 }
 
-/* Filters */
 .filter-bar {
   display: flex;
   align-items: center;
@@ -88,7 +87,6 @@
   color: var(--accent-emerald);
 }
 
-/* Vocab Grid */
 .vocab-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
@@ -166,7 +164,6 @@
   font-style: italic;
 }
 
-/* Interview Bank */
 .interview-list {
   display: flex;
   flex-direction: column;

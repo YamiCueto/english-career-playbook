@@ -28,10 +28,9 @@ export class PracticeStorageService {
     };
 
     const existing = this.getAttempts();
-    const updated = [newAttempt, ...existing].slice(0, 100); // keep last 100 attempts
+    const updated = [newAttempt, ...existing].slice(0, 100);
     localStorage.setItem(ATTEMPTS_STORAGE_KEY, JSON.stringify(updated));
 
-    // If Supabase is connected and user authenticated, push to database asynchronously
     if (this.supabaseService.isConfigured && this.supabaseService.client && this.supabaseService.user) {
       this.supabaseService.client
         .from('practice_attempts')

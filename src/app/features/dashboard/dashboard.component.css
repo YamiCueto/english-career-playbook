@@ -98,7 +98,6 @@
   border-color: var(--text-muted);
 }
 
-/* Stats */
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -148,7 +147,6 @@
   font-size: 0.825rem;
 }
 
-/* Roadmap */
 .roadmap-section {
   display: flex;
   flex-direction: column;

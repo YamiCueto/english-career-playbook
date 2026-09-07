@@ -6,11 +6,12 @@
       <p class="page-subtitle">Vocabulario esencial y banco de preguntas de entrevistas técnicas internacionales.</p>
     </div>
 
-    <!-- Toggle View -->
-    <div class="view-tabs">
+    <div class="view-tabs" role="tablist" aria-label="Secciones del Playbook">
       <button
         type="button"
         class="tab-btn"
+        role="tab"
+        [attr.aria-selected]="activeTab === 'vocab'"
         [class.active]="activeTab === 'vocab'"
         (click)="activeTab = 'vocab'"
       >
@@ -19,6 +20,8 @@
       <button
         type="button"
         class="tab-btn"
+        role="tab"
+        [attr.aria-selected]="activeTab === 'interview'"
         [class.active]="activeTab === 'interview'"
         (click)="activeTab = 'interview'"
       >
@@ -27,11 +30,9 @@
     </div>
   </div>
 
-  <!-- Tab 1: Vocabulary -->
   @if (activeTab === 'vocab') {
     <div class="tab-content">
-      <!-- Filter Bar -->
-      <div class="filter-bar">
+      <div class="filter-bar" aria-label="Filtro de vocabulario">
         <span class="filter-label">Filtrar categoría:</span>
         <button
           type="button"
@@ -67,7 +68,6 @@
         </button>
       </div>
 
-      <!-- Vocabulary Grid -->
       <div class="vocab-grid">
         @for (item of filteredVocabulary; track item.english) {
           <div class="vocab-card">
@@ -86,7 +86,6 @@
     </div>
   }
 
-  <!-- Tab 2: Interview Bank -->
   @if (activeTab === 'interview') {
     <div class="tab-content">
       <div class="interview-list">
