@@ -36,14 +36,110 @@
         </a>
       </nav>
 
-      <div class="nav-status">
-        <span class="status-indicator" [class.connected]="supabaseService.isConfigured && supabaseService.isAuthenticated" aria-hidden="true"></span>
-        <span class="status-text">
-          {{ supabaseService.syncStatusLabel }}
-        </span>
+      <div class="header-actions">
+        <div class="nav-status" [attr.aria-label]="'Estado: ' + connectionLabel()">
+          <span
+            class="status-indicator"
+            [class.connected]="connectionStatus() === 'authenticated'"
+            [class.warning]="connectionStatus() === 'profile-warning' || connectionStatus() === 'guest'"
+            [class.error]="connectionStatus() === 'restoration-error' || connectionStatus() === 'auth-error'"
+            aria-hidden="true"
+          ></span>
+          <span class="status-text">
+            {{ connectionLabel() }}
+          </span>
+        </div>
+
+        <button
+          *ngIf="!supabaseService.isAuthenticated"
+          type="button"
+          class="auth-trigger-btn"
+          (click)="openAuthModal('signin')"
+          aria-label="Acceder o crear cuenta"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+            <circle cx="12" cy="7" r="4"></circle>
+          </svg>
+          <span class="auth-btn-text">Acceder</span>
+        </button>
+
+        <div *ngIf="supabaseService.isAuthenticated" class="user-menu-wrapper">
+          <button
+            type="button"
+            class="user-avatar-btn"
+            (click)="toggleUserMenu()"
+            [attr.aria-expanded]="isUserMenuOpen()"
+            aria-haspopup="true"
+            aria-label="Menú de perfil de usuario"
+          >
+            <span class="user-avatar-circle" aria-hidden="true">{{ userInitials() }}</span>
+            <span class="user-name-text">{{ userDisplayName() }}</span>
+            <svg
+              class="chevron-icon"
+              [class.open]="isUserMenuOpen()"
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              aria-hidden="true"
+            >
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </button>
+
+          <div
+            *ngIf="isUserMenuOpen()"
+            class="user-dropdown-card"
+            role="menu"
+            aria-label="Opciones de cuenta"
+          >
+            <div class="user-dropdown-info">
+              <div class="dropdown-name">{{ userDisplayName() }}</div>
+              <div class="dropdown-email" *ngIf="userEmail()">{{ userEmail() }}</div>
+              <div class="dropdown-badge">
+                <span class="badge-dot" aria-hidden="true"></span>
+                <span>Sesión Activa</span>
+              </div>
+            </div>
+            <div class="dropdown-divider" role="separator"></div>
+            <button
+              type="button"
+              class="signout-btn"
+              (click)="handleSignOut()"
+              role="menuitem"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                <polyline points="16 17 21 12 16 7"></polyline>
+                <line x1="21" y1="12" x2="9" y2="12"></line>
+              </svg>
+              <span>Cerrar Sesión</span>
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   </header>
+
+  <div *ngIf="signOutError() as err" class="signout-alert-banner" role="alert">
+    <div class="alert-content">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+        <circle cx="12" cy="12" r="10"></circle>
+        <line x1="12" y1="8" x2="12" y2="12"></line>
+        <line x1="12" y1="16" x2="12.01" y2="16"></line>
+      </svg>
+      <span>{{ err }}</span>
+    </div>
+    <button type="button" class="alert-dismiss-btn" (click)="dismissSignOutError()" aria-label="Cerrar aviso de error">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+        <line x1="18" y1="6" x2="6" y2="18"></line>
+        <line x1="6" y1="6" x2="18" y2="18"></line>
+      </svg>
+    </button>
+  </div>
 
   <main class="main-content">
     <div class="content-container">
@@ -77,4 +173,10 @@
       <span>Playbook</span>
     </a>
   </nav>
+
+  <app-auth-modal
+    [isOpen]="isAuthModalOpen()"
+    [initialMode]="authModalMode()"
+    (closed)="closeAuthModal()"
+  ></app-auth-modal>
 </div>
