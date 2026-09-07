@@ -3,6 +3,7 @@ import { PracticeAttempt, SessionSummary } from '../models/session.model';
 import { SupabaseService } from './supabase.service';
 import { StorageMigrationService } from './storage-migration.service';
 import { SyncQueueService } from './sync-queue.service';
+import { RemoteSyncService } from './remote-sync.service';
 import { generateUuidV4, isValidUuidV4 } from '../utils/uuid.util';
 import { getStorageNamespace, StorageNamespace } from '../models/sync.model';
 
@@ -13,6 +14,9 @@ export class PracticeStorageService {
   private supabaseService = inject(SupabaseService);
   private migrationService = inject(StorageMigrationService);
   private queueService = inject(SyncQueueService);
+  private remoteSync = inject(RemoteSyncService);
+
+  readonly syncStatus = this.remoteSync.syncStatus;
 
   constructor() {
     this.migrationService.migrate();
@@ -53,6 +57,10 @@ export class PracticeStorageService {
 
     this.queueService.enqueue(this.currentUserId, 'practice_attempt', newAttempt);
 
+    if (this.currentUserId) {
+      void this.remoteSync.requestSync();
+    }
+
     return newAttempt;
   }
 
@@ -89,6 +97,10 @@ export class PracticeStorageService {
         sessionId: newSession.id,
         ...newSession.evaluation,
       });
+    }
+
+    if (this.currentUserId) {
+      void this.remoteSync.requestSync();
     }
   }
 

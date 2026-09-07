@@ -80,8 +80,8 @@ export function mapSessionToDatabaseRow(
     id: session.id,
     user_id: userId,
     session_date: session.date,
-    duration_minutes: session.durationMinutes,
-    focus_theme: session.theme,
+    duration_minutes: Math.max(1, Math.min(480, Math.round(session.durationMinutes || 35))),
+    focus_theme: session.theme.trim() || 'General Practice',
     notes: session.notes ?? null,
   };
 }
@@ -91,16 +91,47 @@ export function mapEvaluationToDatabaseRow(
   sessionId: string,
   userId: string
 ): ProgressEvaluationInsert {
+  const clampScore = (score: number | null | undefined): number =>
+    Math.max(1, Math.min(5, Math.round(score ?? 1)));
+
   return {
     session_id: sessionId,
     user_id: userId,
-    comprehension_score: evaluation.comprehension,
-    construction_score: evaluation.construction,
-    vocabulary_score: evaluation.vocabulary,
-    fluency_score: evaluation.fluency,
-    grammar_score: evaluation.grammar,
-    pronunciation_score: evaluation.pronunciation,
-    new_words_count: evaluation.newWordsCount,
-    next_goal: evaluation.nextGoal,
+    comprehension_score: clampScore(evaluation.comprehension),
+    construction_score: clampScore(evaluation.construction),
+    vocabulary_score: clampScore(evaluation.vocabulary),
+    fluency_score: clampScore(evaluation.fluency),
+    grammar_score: clampScore(evaluation.grammar),
+    pronunciation_score: clampScore(evaluation.pronunciation),
+    new_words_count: Math.max(0, Math.round(evaluation.newWordsCount || 0)),
+    next_goal: evaluation.nextGoal ?? null,
+  };
+}
+
+export function mapDatabaseRowToSession(
+  row: SessionRow,
+  evaluation?: ProgressEvaluation
+): SessionSummary {
+  return {
+    id: row.id,
+    date: row.session_date,
+    durationMinutes: row.duration_minutes,
+    theme: row.focus_theme,
+    notes: row.notes ?? undefined,
+    evaluation,
+    syncStatus: 'synced',
+  };
+}
+
+export function mapDatabaseRowToEvaluation(row: ProgressEvaluationRow): ProgressEvaluation {
+  return {
+    comprehension: row.comprehension_score ?? 1,
+    construction: row.construction_score ?? 1,
+    vocabulary: row.vocabulary_score ?? 1,
+    fluency: row.fluency_score ?? 1,
+    grammar: row.grammar_score ?? 1,
+    pronunciation: row.pronunciation_score ?? 1,
+    newWordsCount: row.new_words_count,
+    nextGoal: row.next_goal ?? '',
   };
 }

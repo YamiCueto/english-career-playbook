@@ -2,6 +2,7 @@ import { Component, inject, signal, computed, HostListener, ElementRef } from '@
 import { CommonModule } from '@angular/common';
 import { RouterOutlet, RouterLink, RouterLinkActive } from '@angular/router';
 import { SupabaseService } from './core/services/supabase.service';
+import { RemoteSyncService } from './core/services/remote-sync.service';
 import { AuthModalComponent } from './features/auth/auth-modal.component';
 
 @Component({
@@ -14,6 +15,9 @@ import { AuthModalComponent } from './features/auth/auth-modal.component';
 export class App {
   private elementRef = inject(ElementRef);
   public supabaseService = inject(SupabaseService);
+  private remoteSync = inject(RemoteSyncService);
+
+  readonly syncStatus = this.remoteSync.syncStatus;
 
   protected readonly title = 'English Career Playbook';
 

@@ -1,5 +1,7 @@
 export type SyncStatus = 'synced' | 'pending' | 'conflict' | 'error';
 
+export type GlobalSyncStatus = 'local' | 'pending' | 'syncing' | 'synced' | 'error' | 'conflict';
+
 export type MigrationStatus = 'started' | 'staged' | 'verified' | 'completed' | 'failed';
 
 export interface MigrationManifest {

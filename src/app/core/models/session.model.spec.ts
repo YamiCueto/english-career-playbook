@@ -3,6 +3,8 @@ import {
   mapDatabaseRowToAttempt,
   mapSessionToDatabaseRow,
   mapEvaluationToDatabaseRow,
+  mapDatabaseRowToSession,
+  mapDatabaseRowToEvaluation,
   PracticeAttempt,
   SessionSummary,
   ProgressEvaluation,
@@ -111,5 +113,100 @@ describe('session.model mappers', () => {
     expect(row.fluency_score).toBe(3);
     expect(row.new_words_count).toBe(12);
     expect(row.next_goal).toBe('Improve pronunciation of past tense -ed');
+  });
+
+  it('should map database row to SessionSummary with evaluation and synced status', () => {
+    const sessionRow: Database['public']['Tables']['sessions']['Row'] = {
+      id: '11111111-2222-4333-8444-555555555555',
+      user_id: userId,
+      session_date: '2026-09-07',
+      duration_minutes: 45,
+      focus_theme: 'Architecture Interviews',
+      notes: 'Notes here',
+      created_at: '2026-09-07T10:00:00.000Z',
+      updated_at: '2026-09-07T10:45:00.000Z',
+    };
+
+    const evaluation: ProgressEvaluation = {
+      comprehension: 5,
+      construction: 4,
+      vocabulary: 4,
+      fluency: 3,
+      grammar: 4,
+      pronunciation: 4,
+      newWordsCount: 12,
+      nextGoal: 'Improve pronunciation',
+    };
+
+    const session = mapDatabaseRowToSession(sessionRow, evaluation);
+    expect(session.id).toBe(sessionRow.id);
+    expect(session.date).toBe('2026-09-07');
+    expect(session.durationMinutes).toBe(45);
+    expect(session.theme).toBe('Architecture Interviews');
+    expect(session.notes).toBe('Notes here');
+    expect(session.evaluation).toEqual(evaluation);
+    expect(session.syncStatus).toBe('synced');
+  });
+
+  it('should map database row to ProgressEvaluation', () => {
+    const evalRow: Database['public']['Tables']['progress_evaluations']['Row'] = {
+      id: 'eval-111',
+      session_id: '11111111-2222-4333-8444-555555555555',
+      user_id: userId,
+      comprehension_score: 5,
+      construction_score: 4,
+      vocabulary_score: 5,
+      fluency_score: 4,
+      grammar_score: 5,
+      pronunciation_score: 4,
+      new_words_count: 7,
+      next_goal: 'Next target',
+      created_at: '2026-09-07T10:00:00.000Z',
+    };
+
+    const ev = mapDatabaseRowToEvaluation(evalRow);
+    expect(ev.comprehension).toBe(5);
+    expect(ev.construction).toBe(4);
+    expect(ev.vocabulary).toBe(5);
+    expect(ev.fluency).toBe(4);
+    expect(ev.grammar).toBe(5);
+    expect(ev.pronunciation).toBe(4);
+    expect(ev.newWordsCount).toBe(7);
+    expect(ev.nextGoal).toBe('Next target');
+  });
+
+  it('should clamp evaluation scores to 1-5 and newWordsCount to non-negative', () => {
+    const invalidEval: ProgressEvaluation = {
+      comprehension: 99,
+      construction: -5,
+      vocabulary: 0,
+      fluency: 10,
+      grammar: 3.8,
+      pronunciation: 1,
+      newWordsCount: -3,
+      nextGoal: 'Goal',
+    };
+
+    const row = mapEvaluationToDatabaseRow(invalidEval, 'sess-1', userId);
+    expect(row.comprehension_score).toBe(5);
+    expect(row.construction_score).toBe(1);
+    expect(row.vocabulary_score).toBe(1);
+    expect(row.fluency_score).toBe(5);
+    expect(row.grammar_score).toBe(4);
+    expect(row.pronunciation_score).toBe(1);
+    expect(row.new_words_count).toBe(0);
+  });
+
+  it('should clamp session duration to 1-480 and sanitize focus theme', () => {
+    const invalidSession: SessionSummary = {
+      id: 'sess-1',
+      date: '2026-09-07',
+      durationMinutes: 9999,
+      theme: '   ',
+    };
+
+    const row = mapSessionToDatabaseRow(invalidSession, userId);
+    expect(row.duration_minutes).toBe(480);
+    expect(row.focus_theme).toBe('General Practice');
   });
 });
