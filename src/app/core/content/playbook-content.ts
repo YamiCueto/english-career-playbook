@@ -118,7 +118,7 @@ export const INITIAL_VOCABULARY: VocabularyWord[] = [
   { english: 'explain', spanish: 'explicar', example: 'Let me explain how we resolved that concurrency issue.', category: 'core' },
   { english: 'challenge', spanish: 'desafío técnico', example: 'The main challenge was keeping backward compatibility.', category: 'core' },
   { english: 'approach', spanish: 'enfoque / abordaje', example: 'I would approach this problem by designing the API contract first.', category: 'technical' },
-  { english: 'relocate', spanish: 'reubicarse / trasladarse', example: 'We are open to relocating to Bogotá for the right opportunity.', category: 'workplace' },
+  { english: 'relocate', spanish: 'reubicarse / trasladarse', example: 'We are open to relocating for the right engineering opportunity.', category: 'workplace' },
 ];
 
 export const INTERVIEW_QUESTIONS: InterviewQuestionItem[] = [
@@ -126,7 +126,7 @@ export const INTERVIEW_QUESTIONS: InterviewQuestionItem[] = [
     id: 1,
     question: 'Could you tell me about yourself?',
     category: 'introduction',
-    referenceResponse: "Hi, my name is Yamid Cueto. I'm a full stack engineer with over nine years of experience specializing in Java, Spring Boot, and Angular. Recently at TCS, I worked on modernizing legacy banking systems, building REST APIs and CI/CD pipelines. I'm interested in global products where I can solve complex engineering challenges.",
+    referenceResponse: "Hi, I'm a full stack engineer with over nine years of experience specializing in Java, Spring Boot, and Angular. In my recent roles, I worked on modernizing legacy enterprise systems, building robust REST APIs and automating CI/CD pipelines. I'm interested in global engineering roles where I can solve complex technical challenges.",
   },
   {
     id: 2,
