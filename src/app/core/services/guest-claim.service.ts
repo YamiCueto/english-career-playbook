@@ -20,6 +20,7 @@ import {
   makeReceiptKey,
 } from '../utils/claim-canonical.util';
 import { generateUuidV4 } from '../utils/uuid.util';
+import { GUEST_STORAGE_LOCK, withStorageLock } from '../utils/storage-lock.util';
 
 export const GUEST_CLAIM_MANIFEST_KEY_PREFIX = 'ecp_claim_manifest_';
 export const GUEST_CLAIM_DECISION_KEY_PREFIX = 'ecp_claim_decision_';
@@ -306,7 +307,7 @@ export class GuestClaimService {
     }
 
     if (manifest.checkpoint === 'REMOTE_VERIFIED' || manifest.checkpoint === 'PARTIALLY_VERIFIED') {
-      this.executeSafePurge(manifest, userId);
+      await this.executeSafePurge(manifest, userId);
       manifest.updatedAt = new Date().toISOString();
 
       const allEntitiesFullyResolved = this.checkIfAllSnapshotEntitiesPurged(manifest);
@@ -721,133 +722,135 @@ export class GuestClaimService {
     return allVerified;
   }
 
-  private executeSafePurge(manifest: GuestClaimManifest, userId: string): void {
-    if (this.activeUserId !== userId) {
-      return;
-    }
-
-    const currentGuestSessions = this.loadGuestSessions();
-    const currentGuestAttempts = this.loadGuestAttempts();
-
-    const snapshotSessionMap = new Map(manifest.snapshot.sessions.map((s) => [s.id, s]));
-    const snapshotAttemptMap = new Map(manifest.snapshot.attempts.map((a) => [a.id, a]));
-
-    const verifiedAttemptIdsToPurge = new Set<string>();
-    for (const currentAttempt of currentGuestAttempts) {
-      const snapshotAttempt = snapshotAttemptMap.get(currentAttempt.id);
-      if (!snapshotAttempt) {
-        continue;
+  private async executeSafePurge(manifest: GuestClaimManifest, userId: string): Promise<void> {
+    await withStorageLock(GUEST_STORAGE_LOCK, async () => {
+      if (this.activeUserId !== userId) {
+        return;
       }
 
-      const isContentIdentical = areEntitiesSemanticallyEqual('practice_attempt', currentAttempt, snapshotAttempt);
-      if (!isContentIdentical) {
-        continue;
+      const currentGuestSessions = this.loadGuestSessions();
+      const currentGuestAttempts = this.loadGuestAttempts();
+
+      const snapshotSessionMap = new Map(manifest.snapshot.sessions.map((s) => [s.id, s]));
+      const snapshotAttemptMap = new Map(manifest.snapshot.attempts.map((a) => [a.id, a]));
+
+      const verifiedAttemptIdsToPurge = new Set<string>();
+      for (const currentAttempt of currentGuestAttempts) {
+        const snapshotAttempt = snapshotAttemptMap.get(currentAttempt.id);
+        if (!snapshotAttempt) {
+          continue;
+        }
+
+        const isContentIdentical = areEntitiesSemanticallyEqual('practice_attempt', currentAttempt, snapshotAttempt);
+        if (!isContentIdentical) {
+          continue;
+        }
+
+        const receipt = manifest.receipts[makeReceiptKey('practice_attempt', currentAttempt.id)];
+        if (!receipt || receipt.status !== 'verified' || receipt.userId !== userId) {
+          continue;
+        }
+
+        if (currentAttempt.sessionId) {
+          const sessionReceipt = manifest.receipts[makeReceiptKey('session', currentAttempt.sessionId)];
+          if (!sessionReceipt || sessionReceipt.status !== 'verified' || sessionReceipt.userId !== userId) {
+            continue;
+          }
+        }
+
+        verifiedAttemptIdsToPurge.add(currentAttempt.id);
       }
 
-      const receipt = manifest.receipts[makeReceiptKey('practice_attempt', currentAttempt.id)];
-      if (!receipt || receipt.status !== 'verified' || receipt.userId !== userId) {
-        continue;
-      }
+      const verifiedSessionIdsToPurge = new Set<string>();
+      for (const currentSession of currentGuestSessions) {
+        const snapshotSession = snapshotSessionMap.get(currentSession.id);
+        if (!snapshotSession) {
+          continue;
+        }
 
-      if (currentAttempt.sessionId) {
-        const sessionReceipt = manifest.receipts[makeReceiptKey('session', currentAttempt.sessionId)];
+        const isContentIdentical = areEntitiesSemanticallyEqual('session', currentSession, snapshotSession);
+        if (!isContentIdentical) {
+          continue;
+        }
+
+        const sessionReceipt = manifest.receipts[makeReceiptKey('session', currentSession.id)];
         if (!sessionReceipt || sessionReceipt.status !== 'verified' || sessionReceipt.userId !== userId) {
           continue;
         }
-      }
 
-      verifiedAttemptIdsToPurge.add(currentAttempt.id);
-    }
+        if (currentSession.evaluation) {
+          const evalReceipt = manifest.receipts[makeReceiptKey('progress_evaluation', currentSession.id)];
+          if (!evalReceipt || evalReceipt.status !== 'verified' || evalReceipt.userId !== userId) {
+            continue;
+          }
+        }
 
-    const verifiedSessionIdsToPurge = new Set<string>();
-    for (const currentSession of currentGuestSessions) {
-      const snapshotSession = snapshotSessionMap.get(currentSession.id);
-      if (!snapshotSession) {
-        continue;
-      }
+        const hasUnresolvedChildAttempts = currentGuestAttempts.some((att) => {
+          if (att.sessionId === currentSession.id) {
+            return !verifiedAttemptIdsToPurge.has(att.id);
+          }
+          return false;
+        });
 
-      const isContentIdentical = areEntitiesSemanticallyEqual('session', currentSession, snapshotSession);
-      if (!isContentIdentical) {
-        continue;
-      }
-
-      const sessionReceipt = manifest.receipts[makeReceiptKey('session', currentSession.id)];
-      if (!sessionReceipt || sessionReceipt.status !== 'verified' || sessionReceipt.userId !== userId) {
-        continue;
-      }
-
-      if (currentSession.evaluation) {
-        const evalReceipt = manifest.receipts[makeReceiptKey('progress_evaluation', currentSession.id)];
-        if (!evalReceipt || evalReceipt.status !== 'verified' || evalReceipt.userId !== userId) {
+        if (hasUnresolvedChildAttempts) {
           continue;
         }
+
+        verifiedSessionIdsToPurge.add(currentSession.id);
       }
 
-      const hasUnresolvedChildAttempts = currentGuestAttempts.some((att) => {
-        if (att.sessionId === currentSession.id) {
-          return !verifiedAttemptIdsToPurge.has(att.id);
+      const freshGuestSessions = this.loadGuestSessions();
+      const remainingSessions = freshGuestSessions.filter((s) => {
+        if (!verifiedSessionIdsToPurge.has(s.id)) {
+          return true;
+        }
+        const snapshotSession = snapshotSessionMap.get(s.id);
+        if (!snapshotSession || !areEntitiesSemanticallyEqual('session', s, snapshotSession)) {
+          return true;
         }
         return false;
       });
 
-      if (hasUnresolvedChildAttempts) {
-        continue;
-      }
+      const freshGuestAttempts = this.loadGuestAttempts();
+      const remainingAttempts = freshGuestAttempts.filter((a) => {
+        if (!verifiedAttemptIdsToPurge.has(a.id)) {
+          return true;
+        }
+        const snapshotAttempt = snapshotAttemptMap.get(a.id);
+        if (!snapshotAttempt || !areEntitiesSemanticallyEqual('practice_attempt', a, snapshotAttempt)) {
+          return true;
+        }
+        return false;
+      });
 
-      verifiedSessionIdsToPurge.add(currentSession.id);
-    }
+      this.saveGuestSessions(remainingSessions);
+      this.saveGuestAttempts(remainingAttempts);
 
-    const freshGuestSessions = this.loadGuestSessions();
-    const remainingSessions = freshGuestSessions.filter((s) => {
-      if (!verifiedSessionIdsToPurge.has(s.id)) {
-        return true;
+      const guestQueue = this.queueService.getQueue(null);
+      for (const item of guestQueue) {
+        let isItemVerified = false;
+        if (item.entityType === 'session' && verifiedSessionIdsToPurge.has(item.id)) {
+          const snapSession = snapshotSessionMap.get(item.id);
+          if (snapSession && areEntitiesSemanticallyEqual('session', item.payload, snapSession)) {
+            isItemVerified = true;
+          }
+        } else if (item.entityType === 'practice_attempt' && verifiedAttemptIdsToPurge.has(item.id)) {
+          const snapAttempt = snapshotAttemptMap.get(item.id);
+          if (snapAttempt && areEntitiesSemanticallyEqual('practice_attempt', item.payload, snapAttempt)) {
+            isItemVerified = true;
+          }
+        } else if (item.entityType === 'progress_evaluation') {
+          const payload = item.payload as ProgressEvaluation & { sessionId?: string };
+          if (payload?.sessionId && verifiedSessionIdsToPurge.has(payload.sessionId)) {
+            isItemVerified = true;
+          }
+        }
+
+        if (isItemVerified) {
+          this.queueService.removeItem(null, item.id);
+        }
       }
-      const snapshotSession = snapshotSessionMap.get(s.id);
-      if (!snapshotSession || !areEntitiesSemanticallyEqual('session', s, snapshotSession)) {
-        return true;
-      }
-      return false;
     });
-
-    const freshGuestAttempts = this.loadGuestAttempts();
-    const remainingAttempts = freshGuestAttempts.filter((a) => {
-      if (!verifiedAttemptIdsToPurge.has(a.id)) {
-        return true;
-      }
-      const snapshotAttempt = snapshotAttemptMap.get(a.id);
-      if (!snapshotAttempt || !areEntitiesSemanticallyEqual('practice_attempt', a, snapshotAttempt)) {
-        return true;
-      }
-      return false;
-    });
-
-    this.saveGuestSessions(remainingSessions);
-    this.saveGuestAttempts(remainingAttempts);
-
-    const guestQueue = this.queueService.getQueue(null);
-    for (const item of guestQueue) {
-      let isItemVerified = false;
-      if (item.entityType === 'session' && verifiedSessionIdsToPurge.has(item.id)) {
-        const snapSession = snapshotSessionMap.get(item.id);
-        if (snapSession && areEntitiesSemanticallyEqual('session', item.payload, snapSession)) {
-          isItemVerified = true;
-        }
-      } else if (item.entityType === 'practice_attempt' && verifiedAttemptIdsToPurge.has(item.id)) {
-        const snapAttempt = snapshotAttemptMap.get(item.id);
-        if (snapAttempt && areEntitiesSemanticallyEqual('practice_attempt', item.payload, snapAttempt)) {
-          isItemVerified = true;
-        }
-      } else if (item.entityType === 'progress_evaluation') {
-        const payload = item.payload as ProgressEvaluation & { sessionId?: string };
-        if (payload?.sessionId && verifiedSessionIdsToPurge.has(payload.sessionId)) {
-          isItemVerified = true;
-        }
-      }
-
-      if (isItemVerified) {
-        this.queueService.removeItem(null, item.id);
-      }
-    }
   }
 
   private checkIfAllSnapshotEntitiesPurged(manifest: GuestClaimManifest): boolean {

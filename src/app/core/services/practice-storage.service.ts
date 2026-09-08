@@ -6,6 +6,7 @@ import { SyncQueueService } from './sync-queue.service';
 import { RemoteSyncService } from './remote-sync.service';
 import { generateUuidV4, isValidUuidV4 } from '../utils/uuid.util';
 import { getStorageNamespace, StorageNamespace } from '../models/sync.model';
+import { GUEST_STORAGE_LOCK, withStorageLock } from '../utils/storage-lock.util';
 
 @Injectable({
   providedIn: 'root',
@@ -30,9 +31,9 @@ export class PracticeStorageService {
     return getStorageNamespace(this.currentUserId);
   }
 
-  getAttempts(): PracticeAttempt[] {
+  getAttempts(targetNamespace: StorageNamespace = this.activeNamespace): PracticeAttempt[] {
     try {
-      const raw = localStorage.getItem(this.activeNamespace.attemptsKey);
+      const raw = localStorage.getItem(targetNamespace.attemptsKey);
       if (!raw) {
         return [];
       }
@@ -43,30 +44,42 @@ export class PracticeStorageService {
     }
   }
 
-  saveAttempt(attempt: Omit<PracticeAttempt, 'id' | 'timestamp'>): PracticeAttempt {
-    const newAttempt: PracticeAttempt = {
-      ...attempt,
-      id: generateUuidV4(),
-      timestamp: new Date().toISOString(),
-      syncStatus: 'pending',
-    };
+  async saveAttempt(attempt: Omit<PracticeAttempt, 'id' | 'timestamp'>): Promise<PracticeAttempt> {
+    const originUserId = this.currentUserId;
+    const originNamespace = getStorageNamespace(originUserId);
+    const lockName = originUserId ? `ecp_user_storage_${originUserId}` : GUEST_STORAGE_LOCK;
 
-    const existing = this.getAttempts();
-    const updated = [newAttempt, ...existing.filter((a) => a.id !== newAttempt.id)].slice(0, 100);
-    localStorage.setItem(this.activeNamespace.attemptsKey, JSON.stringify(updated));
+    const savedAttempt = await withStorageLock(lockName, async () => {
+      if (originUserId !== null && this.currentUserId !== originUserId) {
+        throw new Error('Storage context changed during operation');
+      }
 
-    this.queueService.enqueue(this.currentUserId, 'practice_attempt', newAttempt);
+      const newAttempt: PracticeAttempt = {
+        ...attempt,
+        id: generateUuidV4(),
+        timestamp: new Date().toISOString(),
+        syncStatus: 'pending',
+      };
 
-    if (this.currentUserId) {
+      const existing = this.getAttempts(originNamespace);
+      const updated = [newAttempt, ...existing.filter((a) => a.id !== newAttempt.id)].slice(0, 100);
+      localStorage.setItem(originNamespace.attemptsKey, JSON.stringify(updated));
+
+      this.queueService.enqueue(originUserId, 'practice_attempt', newAttempt);
+
+      return newAttempt;
+    });
+
+    if (originUserId) {
       void this.remoteSync.requestSync();
     }
 
-    return newAttempt;
+    return savedAttempt;
   }
 
-  getSessions(): SessionSummary[] {
+  getSessions(targetNamespace: StorageNamespace = this.activeNamespace): SessionSummary[] {
     try {
-      const raw = localStorage.getItem(this.activeNamespace.sessionsKey);
+      const raw = localStorage.getItem(targetNamespace.sessionsKey);
       if (!raw) {
         return [];
       }
@@ -77,29 +90,39 @@ export class PracticeStorageService {
     }
   }
 
-  saveSession(session: SessionSummary): void {
-    const validatedId = isValidUuidV4(session.id) ? session.id : generateUuidV4();
-    const newSession: SessionSummary = {
-      ...session,
-      id: validatedId,
-      syncStatus: 'pending',
-    };
+  async saveSession(session: SessionSummary): Promise<void> {
+    const originUserId = this.currentUserId;
+    const originNamespace = getStorageNamespace(originUserId);
+    const lockName = originUserId ? `ecp_user_storage_${originUserId}` : GUEST_STORAGE_LOCK;
 
-    const existing = this.getSessions();
-    const updated = [newSession, ...existing.filter((s) => s.id !== newSession.id)];
-    localStorage.setItem(this.activeNamespace.sessionsKey, JSON.stringify(updated));
+    await withStorageLock(lockName, async () => {
+      if (originUserId !== null && this.currentUserId !== originUserId) {
+        throw new Error('Storage context changed during operation');
+      }
 
-    this.queueService.enqueue(this.currentUserId, 'session', newSession);
+      const validatedId = isValidUuidV4(session.id) ? session.id : generateUuidV4();
+      const newSession: SessionSummary = {
+        ...session,
+        id: validatedId,
+        syncStatus: 'pending',
+      };
 
-    if (newSession.evaluation) {
-      this.queueService.enqueue(this.currentUserId, 'progress_evaluation', {
-        id: generateUuidV4(),
-        sessionId: newSession.id,
-        ...newSession.evaluation,
-      });
-    }
+      const existing = this.getSessions(originNamespace);
+      const updated = [newSession, ...existing.filter((s) => s.id !== newSession.id)];
+      localStorage.setItem(originNamespace.sessionsKey, JSON.stringify(updated));
 
-    if (this.currentUserId) {
+      this.queueService.enqueue(originUserId, 'session', newSession);
+
+      if (newSession.evaluation) {
+        this.queueService.enqueue(originUserId, 'progress_evaluation', {
+          id: generateUuidV4(),
+          sessionId: newSession.id,
+          ...newSession.evaluation,
+        });
+      }
+    });
+
+    if (originUserId) {
       void this.remoteSync.requestSync();
     }
   }

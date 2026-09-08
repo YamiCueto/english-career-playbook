@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { GuestClaimService, GUEST_CLAIM_DECISION_KEY_PREFIX, GUEST_CLAIM_POSTPONED_KEY_PREFIX, GUEST_CLAIM_MANIFEST_KEY_PREFIX } from './guest-claim.service';
+import { PracticeStorageService } from './practice-storage.service';
 import { SupabaseService } from './supabase.service';
 import { SyncQueueService } from './sync-queue.service';
 import { RemoteSyncService } from './remote-sync.service';
@@ -9,6 +10,7 @@ import { getStorageNamespace } from '../models/sync.model';
 import { signal } from '@angular/core';
 import { User } from '@supabase/supabase-js';
 import { makeReceiptKey } from '../utils/claim-canonical.util';
+import { GUEST_STORAGE_LOCK, withStorageLock, clearInMemoryLocks } from '../utils/storage-lock.util';
 
 describe('GuestClaimService', () => {
   let service: GuestClaimService;
@@ -74,6 +76,7 @@ describe('GuestClaimService', () => {
   beforeEach(() => {
     localStorage.clear();
     sessionStorage.clear();
+    clearInMemoryLocks();
 
     currentUserSignal.set(null);
     isInitializedSignal.set(true);
@@ -156,6 +159,7 @@ describe('GuestClaimService', () => {
     TestBed.configureTestingModule({
       providers: [
         GuestClaimService,
+        PracticeStorageService,
         SyncQueueService,
         { provide: SupabaseService, useValue: mockSupabase },
         { provide: RemoteSyncService, useValue: mockRemoteSync },
@@ -164,6 +168,12 @@ describe('GuestClaimService', () => {
 
     service = TestBed.inject(GuestClaimService);
     queueService = TestBed.inject(SyncQueueService);
+  });
+
+  afterEach(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+    clearInMemoryLocks();
   });
 
   it('detects no guest data on clean install', () => {
@@ -653,5 +663,179 @@ describe('GuestClaimService', () => {
     const sessionIds = guestSessions.map((s: SessionSummary) => s.id);
     expect(sessionIds).toContain(sampleSession.id);
     expect(sessionIds).toContain('session-concurrent-tab-b');
+  });
+
+  it('ensures guest write waits while purge holds the exclusive lock', async () => {
+    localStorage.setItem('ecp_guest:sessions', JSON.stringify([sampleSession]));
+    localStorage.setItem('ecp_guest:attempts', JSON.stringify([sampleAttempt]));
+
+    currentUserSignal.set(userA);
+    await service.handleUserAuthenticated(userA.id);
+
+    let guestWriteExecuted = false;
+    let guestWritePromise: Promise<void> | null = null;
+
+    const originalSave = (service as any).saveGuestAttempts.bind(service);
+    vi.spyOn(service as any, 'saveGuestAttempts').mockImplementation((attempts: any) => {
+      guestWritePromise = withStorageLock(GUEST_STORAGE_LOCK, async () => {
+        guestWriteExecuted = true;
+      });
+      expect(guestWriteExecuted).toBe(false);
+      return originalSave(attempts);
+    });
+
+    const success = await service.claim();
+    expect(success).toBe(true);
+    expect(guestWritePromise).not.toBeNull();
+    await guestWritePromise;
+    expect(guestWriteExecuted).toBe(true);
+  });
+
+  it('ensures purge waits while guest write holds the exclusive lock', async () => {
+    localStorage.setItem('ecp_guest:sessions', JSON.stringify([sampleSession]));
+    localStorage.setItem('ecp_guest:attempts', JSON.stringify([sampleAttempt]));
+
+    currentUserSignal.set(userA);
+    await service.handleUserAuthenticated(userA.id);
+
+    let releaseGuestWriteLock!: () => void;
+    const guestWriteHeld = new Promise<void>((resolve) => {
+      releaseGuestWriteLock = resolve;
+    });
+
+    let purgeEnteredLock = false;
+    let guestWriteActive = false;
+
+    const guestWriteTask = withStorageLock(GUEST_STORAGE_LOCK, async () => {
+      guestWriteActive = true;
+      await guestWriteHeld;
+      guestWriteActive = false;
+    });
+
+    const originalSave = (service as any).saveGuestAttempts.bind(service);
+    vi.spyOn(service as any, 'saveGuestAttempts').mockImplementation((attempts: any) => {
+      purgeEnteredLock = true;
+      expect(guestWriteActive).toBe(false);
+      return originalSave(attempts);
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(guestWriteActive).toBe(true);
+
+    const claimPromise = service.claim();
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(purgeEnteredLock).toBe(false);
+
+    releaseGuestWriteLock();
+    await guestWriteTask;
+
+    const claimResult = await claimPromise;
+    expect(claimResult).toBe(true);
+    expect(purgeEnteredLock).toBe(true);
+  });
+
+  it('preserves newly added guest records created before purge without deleting them', async () => {
+    localStorage.setItem('ecp_guest:sessions', JSON.stringify([sampleSession]));
+    localStorage.setItem('ecp_guest:attempts', JSON.stringify([sampleAttempt]));
+
+    currentUserSignal.set(userA);
+    await service.handleUserAuthenticated(userA.id);
+
+    const originalVerify = (service as any).verifyRemoteReceipts.bind(service);
+    vi.spyOn(service as any, 'verifyRemoteReceipts').mockImplementation(async (...args: any[]) => {
+      const res = await originalVerify(...args);
+      const newAttempt: PracticeAttempt = {
+        id: 'attempt-brand-new',
+        patternId: 'pattern-d',
+        userInput: 'Newly added guest attempt before purge',
+        isValid: true,
+        feedback: 'ok',
+        timestamp: new Date().toISOString(),
+      };
+      const existing = JSON.parse(localStorage.getItem('ecp_guest:attempts') || '[]');
+      localStorage.setItem('ecp_guest:attempts', JSON.stringify([...existing, newAttempt]));
+      return res;
+    });
+
+    const success = await service.claim();
+    expect(success).toBe(true);
+
+    const attempts = JSON.parse(localStorage.getItem('ecp_guest:attempts') || '[]');
+    expect(attempts.length).toBe(1);
+    expect(attempts[0].id).toBe('attempt-brand-new');
+  });
+
+  it('preserves modified guest records when content differs from snapshot during purge', async () => {
+    localStorage.setItem('ecp_guest:sessions', JSON.stringify([sampleSession]));
+    localStorage.setItem('ecp_guest:attempts', JSON.stringify([sampleAttempt]));
+
+    currentUserSignal.set(userA);
+    await service.handleUserAuthenticated(userA.id);
+
+    const originalVerify = (service as any).verifyRemoteReceipts.bind(service);
+    vi.spyOn(service as any, 'verifyRemoteReceipts').mockImplementation(async (...args: any[]) => {
+      const res = await originalVerify(...args);
+      const modifiedAttempt: PracticeAttempt = {
+        ...sampleAttempt,
+        userInput: 'Modified content differing from snapshot',
+      };
+      localStorage.setItem('ecp_guest:attempts', JSON.stringify([modifiedAttempt]));
+      return res;
+    });
+
+    const success = await service.claim();
+    expect(success).toBe(false);
+
+    const attempts = JSON.parse(localStorage.getItem('ecp_guest:attempts') || '[]');
+    expect(attempts.length).toBe(1);
+    expect(attempts[0].id).toBe(sampleAttempt.id);
+    expect(attempts[0].userInput).toBe('Modified content differing from snapshot');
+  });
+
+  it('guarantees purge cannot interleave between guest entity persistence and queueing', async () => {
+    const practiceStorage = TestBed.inject(PracticeStorageService);
+
+    localStorage.setItem('ecp_guest:sessions', JSON.stringify([sampleSession]));
+    localStorage.setItem('ecp_guest:attempts', JSON.stringify([sampleAttempt]));
+
+    currentUserSignal.set(userA);
+    await service.handleUserAuthenticated(userA.id);
+
+    let purgeRanBeforeQueueing = false;
+    let queueingFinished = false;
+
+    const originalPurge = (service as any).executeSafePurge.bind(service);
+    vi.spyOn(service as any, 'executeSafePurge').mockImplementation(async (...args: any[]) => {
+      if (!queueingFinished) {
+        purgeRanBeforeQueueing = true;
+      }
+      return originalPurge(...args);
+    });
+
+    let claimTriggered = false;
+    let claimPromise: Promise<boolean> | null = null;
+    const originalEnqueue = queueService.enqueue.bind(queueService);
+
+    vi.spyOn(queueService, 'enqueue').mockImplementation((userId: any, entityType: any, payload: any) => {
+      if (!claimTriggered) {
+        claimTriggered = true;
+        claimPromise = service.claim();
+      }
+      return originalEnqueue(userId, entityType, payload);
+    });
+
+    await practiceStorage.saveAttempt({
+      patternId: 'pattern-concurrent',
+      userInput: 'Concurrent attempt during save',
+      isValid: true,
+    });
+    queueingFinished = true;
+
+    if (claimPromise) {
+      await claimPromise;
+    }
+
+    expect(purgeRanBeforeQueueing).toBe(false);
   });
 });
