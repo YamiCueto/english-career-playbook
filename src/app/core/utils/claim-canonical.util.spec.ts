@@ -7,6 +7,7 @@ import {
   areEntitiesSemanticallyEqual,
   computeGuestDatasetFingerprint,
   makeReceiptKey,
+  getCanonicalContent,
 } from './claim-canonical.util';
 import { SessionSummary, PracticeAttempt, ProgressEvaluation } from '../models/session.model';
 
@@ -122,5 +123,12 @@ describe('claim-canonical.util', () => {
     expect(makeReceiptKey('session', 'abc-123')).toBe('session:abc-123');
     expect(makeReceiptKey('practice_attempt', 'xyz-789')).toBe('practice_attempt:xyz-789');
     expect(makeReceiptKey('progress_evaluation', 'eval-456')).toBe('progress_evaluation:eval-456');
+  });
+
+  it('performs exact canonical string comparison for areEntitiesSemanticallyEqual', () => {
+    const evalA: ProgressEvaluation = { ...sampleEval, nextGoal: 'Goal A' };
+    const evalB: ProgressEvaluation = { ...sampleEval, nextGoal: 'Goal B' };
+    expect(getCanonicalContent('progress_evaluation', evalA)).not.toBe(getCanonicalContent('progress_evaluation', evalB));
+    expect(areEntitiesSemanticallyEqual('progress_evaluation', evalA, evalB)).toBe(false);
   });
 });

@@ -86,4 +86,31 @@ describe('SyncQueueService', () => {
     expect(deadletter[0].status).toBe('error');
     expect(deadletter[0].lastError).toContain('42501');
   });
+
+  it('should remove exact item matching id and entityType without removing other entity types with same id', () => {
+    const user = 'user-123';
+    service.enqueue(user, 'session', { id: 'shared-id', date: '2026-09-08' });
+    service.enqueue(user, 'progress_evaluation', { id: 'shared-id', comprehension: 5 });
+
+    expect(service.getQueue(user).length).toBe(2);
+
+    const removed = service.removeExactItem(user, 'progress_evaluation', 'shared-id');
+    expect(removed).toBe(true);
+
+    const remaining = service.getQueue(user);
+    expect(remaining.length).toBe(1);
+    expect(remaining[0].entityType).toBe('session');
+    expect(remaining[0].id).toBe('shared-id');
+  });
+
+  it('should overwrite entire queue with setQueue in single write', () => {
+    const user = 'user-123';
+    service.enqueue(user, 'session', { id: 's-1' });
+    service.enqueue(user, 'session', { id: 's-2' });
+
+    expect(service.getQueue(user).length).toBe(2);
+
+    service.setQueue(user, []);
+    expect(service.getQueue(user).length).toBe(0);
+  });
 });

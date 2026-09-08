@@ -76,6 +76,27 @@ export class SyncQueueService {
     this.saveQueue(namespace.queueKey, queue);
   }
 
+  removeExactItem(
+    userId: string | null,
+    entityType: SyncEntityType,
+    itemId: string
+  ): boolean {
+    const namespace = getStorageNamespace(userId);
+    const queue = this.getQueue(userId);
+    const index = queue.findIndex((item) => item.id === itemId && item.entityType === entityType);
+    if (index >= 0) {
+      queue.splice(index, 1);
+      this.saveQueue(namespace.queueKey, queue);
+      return true;
+    }
+    return false;
+  }
+
+  setQueue(userId: string | null, queue: SyncQueueItem[]): void {
+    const namespace = getStorageNamespace(userId);
+    this.saveQueue(namespace.queueKey, queue);
+  }
+
   updateItem(
     userId: string | null,
     itemId: string,

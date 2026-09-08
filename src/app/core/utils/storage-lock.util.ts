@@ -1,5 +1,13 @@
 export const GUEST_STORAGE_LOCK = 'ecp_guest_storage';
 
+export function getUserStorageLock(userId: string): string {
+  return `ecp_user_storage_${userId}`;
+}
+
+export function getClaimLock(userId: string): string {
+  return `ecp_claim_${userId}`;
+}
+
 const inMemoryLocks = new Map<string, Promise<void>>();
 
 export async function withStorageLock<T>(

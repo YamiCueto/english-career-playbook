@@ -15,22 +15,25 @@ import {
   CORRUPTED_ITEMS_KEY,
 } from './storage-migration.service';
 import { isValidUuidV4 } from '../utils/uuid.util';
+import { clearInMemoryLocks, GUEST_STORAGE_LOCK, withStorageLock } from '../utils/storage-lock.util';
 
 describe('StorageMigrationService', () => {
   let service: StorageMigrationService;
 
   beforeEach(() => {
     localStorage.clear();
+    clearInMemoryLocks();
     TestBed.configureTestingModule({});
     service = TestBed.inject(StorageMigrationService);
   });
 
   afterEach(() => {
     localStorage.clear();
+    clearInMemoryLocks();
   });
 
-  it('should handle clean install when no legacy data exists', () => {
-    const result = service.migrate();
+  it('should handle clean install when no legacy data exists', async () => {
+    const result = await service.migrate();
 
     expect(result.success).toBe(true);
     expect(result.status).toBe('clean_install');
@@ -40,15 +43,15 @@ describe('StorageMigrationService', () => {
     expect(manifest.attemptsCount).toBe(0);
   });
 
-  it('should not re-run if already migrated', () => {
-    service.migrate();
-    const result = service.migrate();
+  it('should not re-run if already migrated', async () => {
+    await service.migrate();
+    const result = await service.migrate();
 
     expect(result.success).toBe(true);
     expect(result.status).toBe('already_migrated');
   });
 
-  it('should migrate legacy data preserving valid UUIDs and generating new UUIDs for legacy IDs', () => {
+  it('should migrate legacy data preserving valid UUIDs and generating new UUIDs for legacy IDs', async () => {
     const validUuid = 'f47ac10b-58cc-4372-a567-0e02b2c3d479';
     const legacyNumericId = '1715000000000';
     const legacySessionId = 'session-123';
@@ -83,7 +86,7 @@ describe('StorageMigrationService', () => {
     localStorage.setItem(LEGACY_ATTEMPTS_KEY, JSON.stringify(legacyAttempts));
     localStorage.setItem(LEGACY_SESSIONS_KEY, JSON.stringify(legacySessions));
 
-    const result = service.migrate();
+    const result = await service.migrate();
 
     expect(result.success).toBe(true);
     expect(result.status).toBe('completed');
@@ -114,7 +117,7 @@ describe('StorageMigrationService', () => {
     expect(idMap[legacySessionId]).toBe(newSessionId);
   });
 
-  it('should recover and clean up if a previous migration was interrupted during staging', () => {
+  it('should recover and clean up if a previous migration was interrupted during staging', async () => {
     const legacyAttempts = [
       {
         id: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
@@ -139,7 +142,7 @@ describe('StorageMigrationService', () => {
       })
     );
 
-    const result = service.migrate();
+    const result = await service.migrate();
 
     expect(result.success).toBe(true);
     expect(result.status).toBe('completed');
@@ -151,7 +154,7 @@ describe('StorageMigrationService', () => {
     expect(guestAttempts[0].id).toBe('f47ac10b-58cc-4372-a567-0e02b2c3d479');
   });
 
-  it('should isolate corrupted JSON items and migrate remaining valid items', () => {
+  it('should isolate corrupted JSON items and migrate remaining valid items', async () => {
     const mixedAttempts = [
       {
         id: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
@@ -166,7 +169,7 @@ describe('StorageMigrationService', () => {
 
     localStorage.setItem(LEGACY_ATTEMPTS_KEY, JSON.stringify(mixedAttempts));
 
-    const result = service.migrate();
+    const result = await service.migrate();
 
     expect(result.success).toBe(true);
     expect(result.migratedAttempts).toBe(1);
@@ -176,7 +179,7 @@ describe('StorageMigrationService', () => {
     expect(corrupted.length).toBe(2);
   });
 
-  it('should map legacy session ID in ProgressEvaluation and PracticeAttempt consistently', () => {
+  it('should map legacy session ID in ProgressEvaluation and PracticeAttempt consistently', async () => {
     const legacySessionId = 'legacy-sess-999';
     const legacySessions = [
       {
@@ -212,7 +215,7 @@ describe('StorageMigrationService', () => {
     localStorage.setItem(LEGACY_SESSIONS_KEY, JSON.stringify(legacySessions));
     localStorage.setItem(LEGACY_ATTEMPTS_KEY, JSON.stringify(legacyAttempts));
 
-    const result = service.migrate();
+    const result = await service.migrate();
     expect(result.success).toBe(true);
 
     const guestSessions = JSON.parse(localStorage.getItem(GUEST_SESSIONS_KEY) || '[]');
@@ -224,7 +227,7 @@ describe('StorageMigrationService', () => {
     expect(guestAttempts[0].sessionId).toBe(newSessionId);
   });
 
-  it('should not modify UUIDs or references when migration runs repeatedly', () => {
+  it('should not modify UUIDs or references when migration runs repeatedly', async () => {
     const legacySessionId = 'legacy-sess-111';
     const legacySessions = [
       {
@@ -249,7 +252,7 @@ describe('StorageMigrationService', () => {
     localStorage.setItem(LEGACY_SESSIONS_KEY, JSON.stringify(legacySessions));
     localStorage.setItem(LEGACY_ATTEMPTS_KEY, JSON.stringify(legacyAttempts));
 
-    service.migrate();
+    await service.migrate();
 
     const firstSessions = JSON.parse(localStorage.getItem(GUEST_SESSIONS_KEY) || '[]');
     const firstAttempts = JSON.parse(localStorage.getItem(GUEST_ATTEMPTS_KEY) || '[]');
@@ -257,7 +260,7 @@ describe('StorageMigrationService', () => {
     localStorage.removeItem(STORAGE_VERSION_KEY);
     localStorage.removeItem(MIGRATION_MANIFEST_KEY);
 
-    service.migrate();
+    await service.migrate();
 
     const secondSessions = JSON.parse(localStorage.getItem(GUEST_SESSIONS_KEY) || '[]');
     const secondAttempts = JSON.parse(localStorage.getItem(GUEST_ATTEMPTS_KEY) || '[]');
@@ -267,7 +270,7 @@ describe('StorageMigrationService', () => {
     expect(secondAttempts[0].sessionId).toBe(firstSessions[0].id);
   });
 
-  it('should keep legacy keys intact and not advance storage_version if writing fails with QuotaExceededError', () => {
+  it('should keep legacy keys intact and not advance storage_version if writing fails with QuotaExceededError', async () => {
     const legacyAttempts = [
       {
         id: 'legacy-1',
@@ -290,7 +293,7 @@ describe('StorageMigrationService', () => {
         return originalSetItem.call(this, key, value);
       };
 
-      const result = service.migrate();
+      const result = await service.migrate();
 
       expect(result.success).toBe(false);
       expect(result.status).toBe('failed');
@@ -299,5 +302,60 @@ describe('StorageMigrationService', () => {
     } finally {
       Storage.prototype.setItem = originalSetItem;
     }
+  });
+
+  it('should acquire GUEST_STORAGE_LOCK during final merge and preserve concurrent guest data', async () => {
+    const legacyAttempts = [
+      {
+        id: 'legacy-attempt-1',
+        patternId: 'pattern-a',
+        userInput: 'Legacy practice attempt',
+        timestamp: '2026-09-07T10:00:00.000Z',
+        isValid: true,
+      },
+    ];
+    localStorage.setItem(LEGACY_ATTEMPTS_KEY, JSON.stringify(legacyAttempts));
+
+    let releaseLock!: () => void;
+    const lockHeld = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+
+    let lockActive!: () => void;
+    const lockIsActive = new Promise<void>((resolve) => {
+      lockActive = resolve;
+    });
+
+    const lockPromise = withStorageLock(GUEST_STORAGE_LOCK, async () => {
+      lockActive();
+      await lockHeld;
+      const concurrentGuestAttempt = [
+        {
+          id: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
+          patternId: 'pattern-b',
+          userInput: 'Concurrent guest attempt while migration waits',
+          timestamp: '2026-09-07T11:00:00.000Z',
+          isValid: true,
+          syncStatus: 'pending',
+        },
+      ];
+      localStorage.setItem(GUEST_ATTEMPTS_KEY, JSON.stringify(concurrentGuestAttempt));
+    });
+
+    await lockIsActive;
+
+    const migrationPromise = service.migrate();
+
+    releaseLock();
+    await lockPromise;
+
+    const result = await migrationPromise;
+    expect(result.success).toBe(true);
+
+    const storedAttempts = JSON.parse(localStorage.getItem(GUEST_ATTEMPTS_KEY) || '[]');
+    expect(storedAttempts.length).toBe(2);
+    const userInputs = storedAttempts.map((a: { userInput: string }) => a.userInput);
+    expect(userInputs).toContain('Legacy practice attempt');
+    expect(userInputs).toContain('Concurrent guest attempt while migration waits');
   });
 });

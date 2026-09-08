@@ -5,12 +5,20 @@ import { PracticeStorageService } from './practice-storage.service';
 import { SupabaseService } from './supabase.service';
 import { SyncQueueService } from './sync-queue.service';
 import { RemoteSyncService } from './remote-sync.service';
-import { SessionSummary, PracticeAttempt, ProgressEvaluation } from '../models/session.model';
+import {
+  SessionSummary,
+  PracticeAttempt,
+  ProgressEvaluation,
+  mapSessionToDatabaseRow,
+  mapEvaluationToDatabaseRow,
+  mapAttemptToDatabaseRow,
+} from '../models/session.model';
 import { getStorageNamespace } from '../models/sync.model';
 import { signal } from '@angular/core';
 import { User } from '@supabase/supabase-js';
 import { makeReceiptKey } from '../utils/claim-canonical.util';
 import { GUEST_STORAGE_LOCK, withStorageLock, clearInMemoryLocks } from '../utils/storage-lock.util';
+import { GuestClaimManifest } from '../models/guest-claim.model';
 
 describe('GuestClaimService', () => {
   let service: GuestClaimService;
@@ -122,35 +130,18 @@ describe('GuestClaimService', () => {
 
     mockRemoteSync = {
       requestSync: vi.fn().mockImplementation(async () => {
-        const queue = queueService.getQueue(currentUserSignal()?.id || null);
+        const uid = currentUserSignal()?.id || 'unknown';
+        const queue = queueService.getQueue(uid);
         for (const item of queue) {
           if (item.entityType === 'session') {
             const s = item.payload as SessionSummary;
-            mockDbTables.sessions.push({
-              id: s.id,
-              user_id: currentUserSignal()?.id,
-              session_date: s.date,
-              focus_theme: s.theme,
-              duration_minutes: s.durationMinutes,
-              notes: s.notes,
-            });
+            mockDbTables.sessions.push(mapSessionToDatabaseRow(s, uid));
           } else if (item.entityType === 'progress_evaluation') {
             const e = item.payload as ProgressEvaluation & { sessionId: string };
-            mockDbTables.progress_evaluations.push({
-              session_id: e.sessionId,
-              user_id: currentUserSignal()?.id,
-              comprehension_score: e.comprehension,
-              fluency_score: e.fluency,
-            });
+            mockDbTables.progress_evaluations.push(mapEvaluationToDatabaseRow(e, e.sessionId, uid));
           } else if (item.entityType === 'practice_attempt') {
             const a = item.payload as PracticeAttempt;
-            mockDbTables.practice_attempts.push({
-              id: a.id,
-              user_id: currentUserSignal()?.id,
-              pattern_id: a.patternId,
-              user_input: a.userInput,
-              session_id: a.sessionId,
-            });
+            mockDbTables.practice_attempts.push(mapAttemptToDatabaseRow(a, uid));
           }
         }
       }),
@@ -837,5 +828,289 @@ describe('GuestClaimService', () => {
     }
 
     expect(purgeRanBeforeQueueing).toBe(false);
+  });
+
+  it('halts claim and records FAILED if saveManifest throws on snapshot capture', async () => {
+    localStorage.setItem('ecp_guest:sessions', JSON.stringify([sampleSession]));
+    currentUserSignal.set(userA);
+    await service.handleUserAuthenticated(userA.id);
+
+    vi.spyOn(service as any, 'saveManifest').mockImplementation(() => {
+      throw new Error('QuotaExceededError: storage full');
+    });
+
+    const success = await service.claim();
+    expect(success).toBe(false);
+    expect(service.activeCheckpoint()).toBe('FAILED');
+    expect(service.claimError()).toContain('QuotaExceededError');
+  });
+
+  it('halts claim and does not progress to LOCAL_MERGED if saveManifest fails at LOCAL_MERGED', async () => {
+    localStorage.setItem('ecp_guest:sessions', JSON.stringify([sampleSession]));
+    currentUserSignal.set(userA);
+    await service.handleUserAuthenticated(userA.id);
+
+    let storageQuotaExceeded = false;
+    const originalSaveManifest = (service as any).saveManifest.bind(service);
+    vi.spyOn(service as any, 'saveManifest').mockImplementation((manifest: any) => {
+      if (manifest.checkpoint === 'LOCAL_MERGED') {
+        storageQuotaExceeded = true;
+      }
+      if (storageQuotaExceeded) {
+        throw new Error('QuotaExceededError: storage is full');
+      }
+      return originalSaveManifest(manifest);
+    });
+
+    const success = await service.claim();
+    expect(success).toBe(false);
+    expect(service.activeCheckpoint()).toBe('FAILED');
+    expect(service.claimError()).toContain('QuotaExceededError');
+
+    const manifestKey = `${GUEST_CLAIM_MANIFEST_KEY_PREFIX}${userA.id}`;
+    const durableManifest = JSON.parse(localStorage.getItem(manifestKey)!);
+    expect(durableManifest.checkpoint).toBe('SNAPSHOT_CAPTURED');
+
+    vi.restoreAllMocks();
+    const retrySuccess = await service.claim();
+    expect(retrySuccess).toBe(true);
+    expect(service.activeCheckpoint()).toBe('COMPLETED');
+
+    const finalManifest = JSON.parse(localStorage.getItem(manifestKey)!);
+    expect(finalManifest.claimId).toBe(durableManifest.claimId);
+    expect(finalManifest.sourceFingerprint).toBe(durableManifest.sourceFingerprint);
+    expect(finalManifest.checkpoint).toBe('COMPLETED');
+  });
+
+  it('resumes from FAILED manifest without replacing snapshot or receipts', async () => {
+    const existingManifest: GuestClaimManifest = {
+      claimId: 'custom-claim-uuid-999',
+      userId: userA.id,
+      checkpoint: 'FAILED',
+      createdAt: '2026-09-01T00:00:00Z',
+      updatedAt: '2026-09-01T00:00:00Z',
+      sourceFingerprint: 'custom-fp-999',
+      snapshot: {
+        sessions: [sampleSession],
+        attempts: [sampleAttempt],
+        queueItems: [],
+      },
+      receipts: {},
+      error: 'Previous failure reason',
+    };
+
+    localStorage.setItem(`${GUEST_CLAIM_MANIFEST_KEY_PREFIX}${userA.id}`, JSON.stringify(existingManifest));
+    currentUserSignal.set(userA);
+
+    const success = await service.reconcile(userA.id);
+    expect(success).toBe(true);
+    expect(service.activeCheckpoint()).toBe('COMPLETED');
+
+    const manifestKey = `${GUEST_CLAIM_MANIFEST_KEY_PREFIX}${userA.id}`;
+    const saved = JSON.parse(localStorage.getItem(manifestKey)!);
+    expect(saved.claimId).toBe('custom-claim-uuid-999');
+    expect(saved.sourceFingerprint).toBe('custom-fp-999');
+    expect(saved.checkpoint).toBe('COMPLETED');
+  });
+
+  it('detects remote conflict when only session notes differ', async () => {
+    localStorage.setItem('ecp_guest:sessions', JSON.stringify([sampleSession]));
+    currentUserSignal.set(userA);
+    await service.handleUserAuthenticated(userA.id);
+
+    mockRemoteSync.requestSync.mockImplementation(async () => {
+      const row = mapSessionToDatabaseRow(sampleSession, userA.id);
+      mockDbTables.sessions.push({
+        ...row,
+        notes: 'Different remote notes entirely',
+      });
+    });
+
+    const success = await service.claim();
+    expect(success).toBe(false);
+    expect(service.activeCheckpoint()).toBe('PARTIALLY_VERIFIED');
+
+    const manifest = JSON.parse(localStorage.getItem(`${GUEST_CLAIM_MANIFEST_KEY_PREFIX}${userA.id}`)!);
+    const receipt = manifest.receipts[makeReceiptKey('session', sampleSession.id)];
+    expect(receipt.status).toBe('remote_conflict');
+    expect(receipt.userId).toBe(userA.id);
+  });
+
+  it('detects remote conflict when each evaluation score differs', async () => {
+    const scoresToTest: Array<{ field: keyof ProgressEvaluation; badVal: any }> = [
+      { field: 'comprehension', badVal: 1 },
+      { field: 'construction', badVal: 1 },
+      { field: 'vocabulary', badVal: 1 },
+      { field: 'fluency', badVal: 1 },
+      { field: 'grammar', badVal: 1 },
+      { field: 'pronunciation', badVal: 1 },
+      { field: 'newWordsCount', badVal: 99 },
+      { field: 'nextGoal', badVal: 'Completely different target' },
+    ];
+
+    for (const testCase of scoresToTest) {
+      localStorage.clear();
+      mockDbTables.sessions = [];
+      mockDbTables.progress_evaluations = [];
+      mockDbTables.practice_attempts = [];
+
+      localStorage.setItem('ecp_guest:sessions', JSON.stringify([sampleSession]));
+      currentUserSignal.set(userA);
+      await service.handleUserAuthenticated(userA.id);
+
+      mockRemoteSync.requestSync.mockImplementation(async () => {
+        const sRow = mapSessionToDatabaseRow(sampleSession, userA.id);
+        mockDbTables.sessions.push(sRow);
+
+        const evalRow = mapEvaluationToDatabaseRow(sampleEval, sampleSession.id, userA.id);
+        const colMap: Record<string, string> = {
+          comprehension: 'comprehension_score',
+          construction: 'construction_score',
+          vocabulary: 'vocabulary_score',
+          fluency: 'fluency_score',
+          grammar: 'grammar_score',
+          pronunciation: 'pronunciation_score',
+          newWordsCount: 'new_words_count',
+          nextGoal: 'next_goal',
+        };
+        const targetCol = colMap[testCase.field as string];
+        mockDbTables.progress_evaluations.push({
+          ...evalRow,
+          [targetCol]: testCase.badVal,
+        });
+      });
+
+      const success = await service.claim();
+      expect(success).toBe(false);
+
+      const manifest = JSON.parse(localStorage.getItem(`${GUEST_CLAIM_MANIFEST_KEY_PREFIX}${userA.id}`)!);
+      const evalReceipt = manifest.receipts[makeReceiptKey('progress_evaluation', sampleSession.id)];
+      expect(evalReceipt.status).toBe('remote_conflict');
+    }
+  });
+
+  it('detects remote conflict when attempt sessionId, timestamp or feedback differs', async () => {
+    const attemptDifferences = [
+      { key: 'session_id', val: 'different-parent-session-id' },
+      { key: 'created_at', val: '2020-01-01T00:00:00Z' },
+      { key: 'feedback_status', val: 'needs_practice' },
+    ];
+
+    for (const diff of attemptDifferences) {
+      localStorage.clear();
+      mockDbTables.sessions = [];
+      mockDbTables.progress_evaluations = [];
+      mockDbTables.practice_attempts = [];
+
+      localStorage.setItem('ecp_guest:sessions', JSON.stringify([sampleSession]));
+      localStorage.setItem('ecp_guest:attempts', JSON.stringify([sampleAttempt]));
+      currentUserSignal.set(userA);
+      await service.handleUserAuthenticated(userA.id);
+
+      mockRemoteSync.requestSync.mockImplementation(async () => {
+        mockDbTables.sessions.push(mapSessionToDatabaseRow(sampleSession, userA.id));
+        mockDbTables.progress_evaluations.push(mapEvaluationToDatabaseRow(sampleEval, sampleSession.id, userA.id));
+
+        const baseAttemptRow = mapAttemptToDatabaseRow(sampleAttempt, userA.id);
+        mockDbTables.practice_attempts.push({
+          ...baseAttemptRow,
+          [diff.key]: diff.val,
+        });
+      });
+
+      const success = await service.claim();
+      expect(success).toBe(false);
+
+      const manifest = JSON.parse(localStorage.getItem(`${GUEST_CLAIM_MANIFEST_KEY_PREFIX}${userA.id}`)!);
+      const attemptReceipt = manifest.receipts[makeReceiptKey('practice_attempt', sampleAttempt.id)];
+      expect(attemptReceipt.status).toBe('remote_conflict');
+    }
+  });
+
+  it('preserves local conflict and orphan receipts without overwriting them during remote verification', async () => {
+    const conflictingSession: SessionSummary = {
+      ...sampleSession,
+      theme: 'User existing theme',
+    };
+    const userNamespace = getStorageNamespace(userA.id);
+    localStorage.setItem(userNamespace.sessionsKey, JSON.stringify([conflictingSession]));
+    localStorage.setItem('ecp_guest:sessions', JSON.stringify([sampleSession]));
+
+    const orphanAttempt: PracticeAttempt = {
+      ...sampleAttempt,
+      id: 'attempt-orphan-1',
+      sessionId: 'non-existent-session-id',
+    };
+    localStorage.setItem('ecp_guest:attempts', JSON.stringify([orphanAttempt]));
+
+    currentUserSignal.set(userA);
+    await service.handleUserAuthenticated(userA.id);
+
+    mockRemoteSync.requestSync.mockImplementation(async () => {
+      mockDbTables.sessions.push(mapSessionToDatabaseRow(sampleSession, userA.id));
+      mockDbTables.practice_attempts.push(mapAttemptToDatabaseRow(orphanAttempt, userA.id));
+    });
+
+    const success = await service.claim();
+    expect(success).toBe(false);
+    expect(service.activeCheckpoint()).toBe('PARTIALLY_VERIFIED');
+
+    const manifest = JSON.parse(localStorage.getItem(`${GUEST_CLAIM_MANIFEST_KEY_PREFIX}${userA.id}`)!);
+    const sessionReceipt = manifest.receipts[makeReceiptKey('session', sampleSession.id)];
+    expect(sessionReceipt.status).toBe('remote_conflict');
+
+    const orphanReceipt = manifest.receipts[makeReceiptKey('practice_attempt', orphanAttempt.id)];
+    expect(orphanReceipt.status).toBe('error');
+    expect(orphanReceipt.errorMessage).toContain('Orphan foreign key');
+  });
+
+  it('queue purge only removes items matching exact entityType and canonical payload', async () => {
+    localStorage.setItem('ecp_guest:sessions', JSON.stringify([sampleSession]));
+    queueService.enqueue(null, 'session', sampleSession);
+
+    currentUserSignal.set(userA);
+    await service.handleUserAuthenticated(userA.id);
+
+    const originalPurge = (service as any).executeSafePurge.bind(service);
+    vi.spyOn(service as any, 'executeSafePurge').mockImplementation(async (...args: any[]) => {
+      const modifiedSession: SessionSummary = {
+        ...sampleSession,
+        theme: 'Modified theme after snapshot',
+      };
+      queueService.enqueue(null, 'session', modifiedSession);
+
+      const unverifiedNewSession: SessionSummary = {
+        id: 'session-brand-new',
+        date: '2026-09-08',
+        durationMinutes: 20,
+        theme: 'Brand new session',
+      };
+      queueService.enqueue(null, 'session', unverifiedNewSession);
+
+      return originalPurge(...args);
+    });
+
+    await service.claim();
+
+    const remainingQueue = queueService.getQueue(null);
+    expect(remainingQueue.some((q) => (q.payload as SessionSummary).theme === 'Modified theme after snapshot')).toBe(true);
+    expect(remainingQueue.some((q) => q.id === 'session-brand-new')).toBe(true);
+  });
+
+  it('does not declare COMPLETED if unresolved snapshot entities or queue items remain', async () => {
+    localStorage.setItem('ecp_guest:sessions', JSON.stringify([sampleSession]));
+    queueService.enqueue(null, 'session', sampleSession);
+
+    currentUserSignal.set(userA);
+    await service.handleUserAuthenticated(userA.id);
+
+    vi.spyOn(service as any, 'verifyRemoteReceipts').mockImplementation(async () => {
+      return false;
+    });
+
+    const success = await service.claim();
+    expect(success).toBe(false);
+    expect(service.activeCheckpoint()).toBe('PARTIALLY_VERIFIED');
+    expect(service.isClaimPromptVisible()).toBe(true);
   });
 });

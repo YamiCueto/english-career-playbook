@@ -6,7 +6,7 @@ import { SyncQueueService } from './sync-queue.service';
 import { RemoteSyncService } from './remote-sync.service';
 import { generateUuidV4, isValidUuidV4 } from '../utils/uuid.util';
 import { getStorageNamespace, StorageNamespace } from '../models/sync.model';
-import { GUEST_STORAGE_LOCK, withStorageLock } from '../utils/storage-lock.util';
+import { GUEST_STORAGE_LOCK, getUserStorageLock, withStorageLock } from '../utils/storage-lock.util';
 
 @Injectable({
   providedIn: 'root',
@@ -19,8 +19,20 @@ export class PracticeStorageService {
 
   readonly syncStatus = this.remoteSync.syncStatus;
 
+  private migrationPromise: Promise<unknown> | null = null;
+
   constructor() {
-    this.migrationService.migrate();
+    this.migrationPromise = this.migrationService.migrate();
+  }
+
+  private async ensureMigrated(): Promise<void> {
+    if (this.migrationPromise) {
+      try {
+        await this.migrationPromise;
+      } catch {
+        this.migrationPromise = null;
+      }
+    }
   }
 
   get currentUserId(): string | null {
@@ -47,7 +59,9 @@ export class PracticeStorageService {
   async saveAttempt(attempt: Omit<PracticeAttempt, 'id' | 'timestamp'>): Promise<PracticeAttempt> {
     const originUserId = this.currentUserId;
     const originNamespace = getStorageNamespace(originUserId);
-    const lockName = originUserId ? `ecp_user_storage_${originUserId}` : GUEST_STORAGE_LOCK;
+    const lockName = originUserId ? getUserStorageLock(originUserId) : GUEST_STORAGE_LOCK;
+
+    await this.ensureMigrated();
 
     const savedAttempt = await withStorageLock(lockName, async () => {
       if (originUserId !== null && this.currentUserId !== originUserId) {
@@ -93,7 +107,9 @@ export class PracticeStorageService {
   async saveSession(session: SessionSummary): Promise<void> {
     const originUserId = this.currentUserId;
     const originNamespace = getStorageNamespace(originUserId);
-    const lockName = originUserId ? `ecp_user_storage_${originUserId}` : GUEST_STORAGE_LOCK;
+    const lockName = originUserId ? getUserStorageLock(originUserId) : GUEST_STORAGE_LOCK;
+
+    await this.ensureMigrated();
 
     await withStorageLock(lockName, async () => {
       if (originUserId !== null && this.currentUserId !== originUserId) {

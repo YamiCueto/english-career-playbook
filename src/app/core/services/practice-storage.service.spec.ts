@@ -8,6 +8,12 @@ import { SyncQueueService } from './sync-queue.service';
 import { RemoteSyncService } from './remote-sync.service';
 import { User } from '@supabase/supabase-js';
 import { clearInMemoryLocks, GUEST_STORAGE_LOCK, withStorageLock } from '../utils/storage-lock.util';
+import {
+  StorageMigrationService,
+  LEGACY_ATTEMPTS_KEY,
+  STORAGE_VERSION_KEY,
+  MIGRATION_MANIFEST_KEY,
+} from './storage-migration.service';
 
 describe('PracticeStorageService', () => {
   let service: PracticeStorageService;
@@ -379,5 +385,61 @@ describe('PracticeStorageService', () => {
     expect(remoteSync.requestSync).toHaveBeenCalledTimes(2);
     expect(service.getAttempts().length).toBe(1);
     expect(service.getSessions().length).toBe(1);
+  });
+
+  it('should guarantee no data loss between pending migration and concurrent guest saveAttempt', async () => {
+    const legacyAttempts = [
+      {
+        id: 'legacy-attempt-1',
+        patternId: 'pattern-a',
+        userInput: 'Legacy practice attempt',
+        timestamp: '2026-09-07T10:00:00.000Z',
+        isValid: true,
+      },
+    ];
+    localStorage.setItem(LEGACY_ATTEMPTS_KEY, JSON.stringify(legacyAttempts));
+    localStorage.removeItem(STORAGE_VERSION_KEY);
+    localStorage.removeItem(MIGRATION_MANIFEST_KEY);
+
+    let releaseLock!: () => void;
+    const lockHeld = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+
+    let lockAcquired!: () => void;
+    const lockIsActive = new Promise<void>((resolve) => {
+      lockAcquired = resolve;
+    });
+
+    const migrationService = TestBed.inject(StorageMigrationService);
+
+    const blockerPromise = withStorageLock(GUEST_STORAGE_LOCK, async () => {
+      lockAcquired();
+      await lockHeld;
+    });
+
+    await lockIsActive;
+
+    const migrationPromise = migrationService.migrate();
+
+    const savePromise = service.saveAttempt({
+      patternId: 'pattern-b',
+      userInput: 'Concurrent guest attempt',
+      isValid: true,
+    });
+
+    releaseLock();
+    await blockerPromise;
+
+    const [migrationResult, savedAttempt] = await Promise.all([migrationPromise, savePromise]);
+
+    expect(migrationResult.success).toBe(true);
+    expect(savedAttempt.userInput).toBe('Concurrent guest attempt');
+
+    const attempts = service.getAttempts();
+    expect(attempts.length).toBe(2);
+    const texts = attempts.map((a) => a.userInput);
+    expect(texts).toContain('Legacy practice attempt');
+    expect(texts).toContain('Concurrent guest attempt');
   });
 });

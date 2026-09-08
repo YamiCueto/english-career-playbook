@@ -2,7 +2,14 @@ import { Injectable, inject, signal, computed, effect } from '@angular/core';
 import { SupabaseService } from './supabase.service';
 import { SyncQueueService } from './sync-queue.service';
 import { RemoteSyncService } from './remote-sync.service';
-import { PracticeAttempt, ProgressEvaluation, SessionSummary } from '../models/session.model';
+import {
+  PracticeAttempt,
+  ProgressEvaluation,
+  SessionSummary,
+  mapAttemptToDatabaseRow,
+  mapEvaluationToDatabaseRow,
+  mapSessionToDatabaseRow,
+} from '../models/session.model';
 import { getStorageNamespace, SyncEntityType, SyncQueueItem } from '../models/sync.model';
 import {
   ClaimCheckpoint,
@@ -20,7 +27,12 @@ import {
   makeReceiptKey,
 } from '../utils/claim-canonical.util';
 import { generateUuidV4 } from '../utils/uuid.util';
-import { GUEST_STORAGE_LOCK, withStorageLock } from '../utils/storage-lock.util';
+import {
+  GUEST_STORAGE_LOCK,
+  withStorageLock,
+  getUserStorageLock,
+  getClaimLock,
+} from '../utils/storage-lock.util';
 
 export const GUEST_CLAIM_MANIFEST_KEY_PREFIX = 'ecp_claim_manifest_';
 export const GUEST_CLAIM_DECISION_KEY_PREFIX = 'ecp_claim_decision_';
@@ -191,6 +203,19 @@ export class GuestClaimService {
           const msg = err instanceof Error ? err.message : 'Error processing guest data claim';
           this.claimError.set(msg);
           this.activeCheckpoint.set('FAILED');
+          const currentMan = this.currentManifest();
+          if (currentMan) {
+            try {
+              const failedManifest: GuestClaimManifest = {
+                ...currentMan,
+                checkpoint: 'FAILED',
+                error: msg,
+                updatedAt: new Date().toISOString(),
+              };
+              this.saveManifest(failedManifest);
+              this.currentManifest.set(failedManifest);
+            } catch {}
+          }
         }
         return false;
       } finally {
@@ -206,7 +231,7 @@ export class GuestClaimService {
   private async withClaimLock<T>(userId: string, task: () => Promise<T>): Promise<T | null> {
     if (typeof navigator !== 'undefined' && 'locks' in navigator && navigator.locks?.request) {
       try {
-        return await navigator.locks.request(`ecp_claim_${userId}`, { ifAvailable: true }, async (lock) => {
+        return await navigator.locks.request(getClaimLock(userId), { ifAvailable: true }, async (lock) => {
           if (!lock) {
             return null;
           }
@@ -222,33 +247,51 @@ export class GuestClaimService {
   private async executeClaimPipeline(userId: string, opGen: number): Promise<boolean> {
     let manifest = this.loadManifest(userId);
 
-    if (!manifest || manifest.checkpoint === 'COMPLETED' || manifest.checkpoint === 'FAILED') {
-      const rawSessions = this.loadGuestSessions();
-      const rawAttempts = this.loadGuestAttempts();
-      const rawQueue = this.queueService.getQueue(null);
+    if (!manifest || manifest.checkpoint === 'COMPLETED') {
+      manifest = await withStorageLock(GUEST_STORAGE_LOCK, async () => {
+        const rawSessions = this.loadGuestSessions();
+        const rawAttempts = this.loadGuestAttempts();
+        const rawQueue = this.queueService.getQueue(null);
 
-      const snapshot: DurableClaimSnapshot = {
-        sessions: rawSessions,
-        attempts: rawAttempts,
-        queueItems: rawQueue,
-      };
+        const snapshot: DurableClaimSnapshot = {
+          sessions: rawSessions,
+          attempts: rawAttempts,
+          queueItems: rawQueue,
+        };
 
-      const sourceFingerprint = computeGuestDatasetFingerprint(rawSessions, rawAttempts);
+        const sourceFingerprint = computeGuestDatasetFingerprint(rawSessions, rawAttempts);
 
-      manifest = {
-        claimId: generateUuidV4(),
-        userId,
-        checkpoint: 'SNAPSHOT_CAPTURED',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        sourceFingerprint,
-        snapshot,
-        receipts: {},
-      };
+        const newManifest: GuestClaimManifest = {
+          claimId: generateUuidV4(),
+          userId,
+          checkpoint: 'SNAPSHOT_CAPTURED',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          sourceFingerprint,
+          snapshot,
+          receipts: {},
+        };
 
-      this.saveManifest(manifest);
+        this.saveManifest(newManifest);
+        return newManifest;
+      });
       this.currentManifest.set(manifest);
       this.activeCheckpoint.set('SNAPSHOT_CAPTURED');
+    } else if (manifest.checkpoint === 'FAILED') {
+      manifest.error = undefined;
+      manifest.updatedAt = new Date().toISOString();
+      const hasReceipts = Object.keys(manifest.receipts || {}).length > 0;
+      manifest.checkpoint = hasReceipts ? 'PARTIALLY_VERIFIED' : 'SNAPSHOT_CAPTURED';
+      this.saveManifest(manifest);
+      this.currentManifest.set(manifest);
+      this.activeCheckpoint.set(manifest.checkpoint);
+    } else {
+      this.currentManifest.set(manifest);
+      this.activeCheckpoint.set(manifest.checkpoint);
+    }
+
+    if (!manifest) {
+      return false;
     }
 
     if (this.shouldAbort(opGen, userId)) {
@@ -256,7 +299,7 @@ export class GuestClaimService {
     }
 
     if (manifest.checkpoint === 'SNAPSHOT_CAPTURED') {
-      this.mergeLocalSnapshot(manifest, userId);
+      await this.mergeLocalSnapshot(manifest, userId);
       manifest.checkpoint = 'LOCAL_MERGED';
       manifest.updatedAt = new Date().toISOString();
       this.saveManifest(manifest);
@@ -314,6 +357,8 @@ export class GuestClaimService {
       if (allEntitiesFullyResolved) {
         manifest.checkpoint = 'COMPLETED';
         this.isClaimPromptVisible.set(false);
+      } else {
+        manifest.checkpoint = 'PARTIALLY_VERIFIED';
       }
 
       this.saveManifest(manifest);
@@ -339,6 +384,20 @@ export class GuestClaimService {
       if (this.claimGeneration === opGen && this.activeUserId === userId) {
         const msg = err instanceof Error ? err.message : 'Error reconciling claim';
         this.claimError.set(msg);
+        this.activeCheckpoint.set('FAILED');
+        const currentMan = this.currentManifest();
+        if (currentMan) {
+          try {
+            const failedManifest: GuestClaimManifest = {
+              ...currentMan,
+              checkpoint: 'FAILED',
+              error: msg,
+              updatedAt: new Date().toISOString(),
+            };
+            this.saveManifest(failedManifest);
+            this.currentManifest.set(failedManifest);
+          } catch {}
+        }
       }
       return false;
     } finally {
@@ -348,114 +407,141 @@ export class GuestClaimService {
     }
   }
 
-  private mergeLocalSnapshot(manifest: GuestClaimManifest, userId: string): void {
-    const userNamespace = getStorageNamespace(userId);
-    const existingSessions = this.loadSessionsFromKey(userNamespace.sessionsKey);
-    const existingAttempts = this.loadAttemptsFromKey(userNamespace.attemptsKey);
+  private async mergeLocalSnapshot(manifest: GuestClaimManifest, userId: string): Promise<void> {
+    await withStorageLock(getUserStorageLock(userId), async () => {
+      const userNamespace = getStorageNamespace(userId);
+      const existingSessions = this.loadSessionsFromKey(userNamespace.sessionsKey);
+      const existingAttempts = this.loadAttemptsFromKey(userNamespace.attemptsKey);
 
-    const destSessionMap = new Map<string, SessionSummary>(existingSessions.map((s) => [s.id, s]));
-    const destAttemptMap = new Map<string, PracticeAttempt>(existingAttempts.map((a) => [a.id, a]));
+      const destSessionMap = new Map<string, SessionSummary>(existingSessions.map((s) => [s.id, s]));
+      const destAttemptMap = new Map<string, PracticeAttempt>(existingAttempts.map((a) => [a.id, a]));
 
-    const snapshotSessionIds = new Set(manifest.snapshot.sessions.map((s) => s.id));
-    const allKnownSessionIds = new Set<string>([...snapshotSessionIds, ...destSessionMap.keys()]);
+      const snapshotSessionIds = new Set(manifest.snapshot.sessions.map((s) => s.id));
+      const allKnownSessionIds = new Set<string>([...snapshotSessionIds, ...destSessionMap.keys()]);
 
-    const updatedSessions = [...existingSessions];
-    for (const guestSession of manifest.snapshot.sessions) {
-      const existing = destSessionMap.get(guestSession.id);
-      if (!existing) {
-        updatedSessions.push({
-          ...guestSession,
-          syncStatus: 'pending',
-          claimedBy: userId,
-          claimedAt: new Date().toISOString(),
-        });
-        destSessionMap.set(guestSession.id, guestSession);
-      } else {
-        const isIdentical = areEntitiesSemanticallyEqual('session', guestSession, existing);
-        if (!isIdentical) {
-          manifest.receipts[makeReceiptKey('session', guestSession.id)] = {
-            receiptId: generateUuidV4(),
-            claimId: manifest.claimId,
-            userId,
-            entityType: 'session',
-            entityId: guestSession.id,
-            expectedFingerprint: computeEntityFingerprint('session', guestSession),
-            verifiedAt: new Date().toISOString(),
-            status: 'remote_conflict',
-            errorMessage: 'Local conflict with existing user session',
-          };
+      const updatedSessions = [...existingSessions];
+      for (const guestSession of manifest.snapshot.sessions) {
+        const existing = destSessionMap.get(guestSession.id);
+        if (!existing) {
+          updatedSessions.push({
+            ...guestSession,
+            syncStatus: 'pending',
+            claimedBy: userId,
+            claimedAt: new Date().toISOString(),
+          });
+          destSessionMap.set(guestSession.id, guestSession);
+        } else {
+          const isIdentical = areEntitiesSemanticallyEqual('session', guestSession, existing);
+          if (!isIdentical) {
+            const receiptKey = makeReceiptKey('session', guestSession.id);
+            const existingReceipt = manifest.receipts[receiptKey];
+            if (!existingReceipt || existingReceipt.status !== 'remote_conflict') {
+              manifest.receipts[receiptKey] = {
+                receiptId: existingReceipt?.receiptId || generateUuidV4(),
+                claimId: manifest.claimId,
+                userId,
+                entityType: 'session',
+                entityId: guestSession.id,
+                expectedFingerprint: computeEntityFingerprint('session', guestSession),
+                verifiedAt: new Date().toISOString(),
+                status: 'remote_conflict',
+                errorMessage: 'Local conflict with existing user session',
+              };
+            }
+          }
         }
       }
-    }
 
-    const updatedAttempts = [...existingAttempts];
-    for (const guestAttempt of manifest.snapshot.attempts) {
-      if (guestAttempt.sessionId && !allKnownSessionIds.has(guestAttempt.sessionId)) {
-        manifest.receipts[makeReceiptKey('practice_attempt', guestAttempt.id)] = {
-          receiptId: generateUuidV4(),
-          claimId: manifest.claimId,
-          userId,
-          entityType: 'practice_attempt',
-          entityId: guestAttempt.id,
-          expectedFingerprint: computeEntityFingerprint('practice_attempt', guestAttempt),
-          verifiedAt: new Date().toISOString(),
-          status: 'error',
-          errorMessage: 'Orphan foreign key: sessionId not resolvable in destination',
-        };
-        continue;
-      }
+      const updatedAttempts = [...existingAttempts];
+      for (const guestAttempt of manifest.snapshot.attempts) {
+        if (guestAttempt.sessionId && !allKnownSessionIds.has(guestAttempt.sessionId)) {
+          const receiptKey = makeReceiptKey('practice_attempt', guestAttempt.id);
+          const existingReceipt = manifest.receipts[receiptKey];
+          if (!existingReceipt || (existingReceipt.status !== 'remote_conflict' && existingReceipt.status !== 'error')) {
+            manifest.receipts[receiptKey] = {
+              receiptId: existingReceipt?.receiptId || generateUuidV4(),
+              claimId: manifest.claimId,
+              userId,
+              entityType: 'practice_attempt',
+              entityId: guestAttempt.id,
+              expectedFingerprint: computeEntityFingerprint('practice_attempt', guestAttempt),
+              verifiedAt: new Date().toISOString(),
+              status: 'error',
+              errorMessage: 'Orphan foreign key: sessionId not resolvable in destination',
+            };
+          }
+          continue;
+        }
 
-      const existing = destAttemptMap.get(guestAttempt.id);
-      if (!existing) {
-        updatedAttempts.push({
-          ...guestAttempt,
-          syncStatus: 'pending',
-          claimedBy: userId,
-          claimedAt: new Date().toISOString(),
-        });
-        destAttemptMap.set(guestAttempt.id, guestAttempt);
-      } else {
-        const isIdentical = areEntitiesSemanticallyEqual('practice_attempt', guestAttempt, existing);
-        if (!isIdentical) {
-          manifest.receipts[makeReceiptKey('practice_attempt', guestAttempt.id)] = {
-            receiptId: generateUuidV4(),
-            claimId: manifest.claimId,
-            userId,
-            entityType: 'practice_attempt',
-            entityId: guestAttempt.id,
-            expectedFingerprint: computeEntityFingerprint('practice_attempt', guestAttempt),
-            verifiedAt: new Date().toISOString(),
-            status: 'remote_conflict',
-            errorMessage: 'Local conflict with existing user attempt',
-          };
+        const existing = destAttemptMap.get(guestAttempt.id);
+        if (!existing) {
+          updatedAttempts.push({
+            ...guestAttempt,
+            syncStatus: 'pending',
+            claimedBy: userId,
+            claimedAt: new Date().toISOString(),
+          });
+          destAttemptMap.set(guestAttempt.id, guestAttempt);
+        } else {
+          const isIdentical = areEntitiesSemanticallyEqual('practice_attempt', guestAttempt, existing);
+          if (!isIdentical) {
+            const receiptKey = makeReceiptKey('practice_attempt', guestAttempt.id);
+            const existingReceipt = manifest.receipts[receiptKey];
+            if (!existingReceipt || existingReceipt.status !== 'remote_conflict') {
+              manifest.receipts[receiptKey] = {
+                receiptId: existingReceipt?.receiptId || generateUuidV4(),
+                claimId: manifest.claimId,
+                userId,
+                entityType: 'practice_attempt',
+                entityId: guestAttempt.id,
+                expectedFingerprint: computeEntityFingerprint('practice_attempt', guestAttempt),
+                verifiedAt: new Date().toISOString(),
+                status: 'remote_conflict',
+                errorMessage: 'Local conflict with existing user attempt',
+              };
+            }
+          }
         }
       }
-    }
 
-    this.saveSessionsToKey(userNamespace.sessionsKey, updatedSessions);
-    this.saveAttemptsToKey(userNamespace.attemptsKey, updatedAttempts);
+      this.saveSessionsToKey(userNamespace.sessionsKey, updatedSessions);
+      this.saveAttemptsToKey(userNamespace.attemptsKey, updatedAttempts);
+    });
   }
 
   private enqueueLocalSnapshot(manifest: GuestClaimManifest, userId: string): void {
+    const currentQueue = this.queueService.getQueue(userId);
+    const queuedKeys = new Set(currentQueue.map((item) => `${item.entityType}:${item.id}`));
+
     for (const session of manifest.snapshot.sessions) {
       const receiptKey = makeReceiptKey('session', session.id);
       if (manifest.receipts[receiptKey]?.status === 'remote_conflict') {
         continue;
       }
 
-      this.queueService.enqueue(userId, 'session', {
-        ...session,
-        syncStatus: 'pending',
-        claimedBy: userId,
-        claimedAt: new Date().toISOString(),
-      });
+      if (!queuedKeys.has(`session:${session.id}`)) {
+        this.queueService.enqueue(userId, 'session', {
+          ...session,
+          syncStatus: 'pending',
+          claimedBy: userId,
+          claimedAt: new Date().toISOString(),
+        });
+        queuedKeys.add(`session:${session.id}`);
+      }
 
       if (session.evaluation) {
-        this.queueService.enqueue(userId, 'progress_evaluation', {
-          id: generateUuidV4(),
-          sessionId: session.id,
-          ...session.evaluation,
-        });
+        const evalKey = `progress_evaluation:${session.id}`;
+        const hasEval = currentQueue.some(
+          (q) => q.entityType === 'progress_evaluation' && (q.payload as { sessionId?: string })?.sessionId === session.id
+        );
+        if (!hasEval && !queuedKeys.has(evalKey)) {
+          this.queueService.enqueue(userId, 'progress_evaluation', {
+            id: generateUuidV4(),
+            sessionId: session.id,
+            ...session.evaluation,
+          });
+          queuedKeys.add(evalKey);
+        }
       }
     }
 
@@ -466,12 +552,15 @@ export class GuestClaimService {
         continue;
       }
 
-      this.queueService.enqueue(userId, 'practice_attempt', {
-        ...attempt,
-        syncStatus: 'pending',
-        claimedBy: userId,
-        claimedAt: new Date().toISOString(),
-      });
+      if (!queuedKeys.has(`practice_attempt:${attempt.id}`)) {
+        this.queueService.enqueue(userId, 'practice_attempt', {
+          ...attempt,
+          syncStatus: 'pending',
+          claimedBy: userId,
+          claimedAt: new Date().toISOString(),
+        });
+        queuedKeys.add(`practice_attempt:${attempt.id}`);
+      }
     }
   }
 
@@ -494,6 +583,17 @@ export class GuestClaimService {
       const receiptKey = makeReceiptKey('session', session.id);
       const expectedFingerprint = computeEntityFingerprint('session', session);
 
+      const existingReceipt = manifest.receipts[receiptKey];
+      if (
+        existingReceipt &&
+        (existingReceipt.status === 'remote_conflict' ||
+          existingReceipt.status === 'unauthorized' ||
+          existingReceipt.status === 'error')
+      ) {
+        allVerified = false;
+        continue;
+      }
+
       const { data, error } = await client
         .from('sessions')
         .select('*')
@@ -503,7 +603,7 @@ export class GuestClaimService {
       if (error) {
         allVerified = false;
         manifest.receipts[receiptKey] = {
-          receiptId: manifest.receipts[receiptKey]?.receiptId || generateUuidV4(),
+          receiptId: existingReceipt?.receiptId || generateUuidV4(),
           claimId: manifest.claimId,
           userId,
           entityType: 'session',
@@ -519,7 +619,7 @@ export class GuestClaimService {
       if (!data) {
         allVerified = false;
         manifest.receipts[receiptKey] = {
-          receiptId: manifest.receipts[receiptKey]?.receiptId || generateUuidV4(),
+          receiptId: existingReceipt?.receiptId || generateUuidV4(),
           claimId: manifest.claimId,
           userId,
           entityType: 'session',
@@ -532,13 +632,15 @@ export class GuestClaimService {
         continue;
       }
 
+      const expectedRow = mapSessionToDatabaseRow(session, userId);
       const remoteUserId = data.user_id;
       const remoteMatchesContent =
-        data.id === session.id &&
-        data.user_id === userId &&
-        data.session_date === session.date &&
-        data.focus_theme === session.theme &&
-        data.duration_minutes === session.durationMinutes;
+        data.id === expectedRow.id &&
+        data.user_id === expectedRow.user_id &&
+        data.session_date === expectedRow.session_date &&
+        data.focus_theme === expectedRow.focus_theme &&
+        data.duration_minutes === expectedRow.duration_minutes &&
+        (data.notes ?? null) === (expectedRow.notes ?? null);
 
       const receiptStatus: VerificationStatus =
         remoteUserId !== userId
@@ -552,7 +654,7 @@ export class GuestClaimService {
       }
 
       manifest.receipts[receiptKey] = {
-        receiptId: manifest.receipts[receiptKey]?.receiptId || generateUuidV4(),
+        receiptId: existingReceipt?.receiptId || generateUuidV4(),
         claimId: manifest.claimId,
         userId,
         entityType: 'session',
@@ -567,6 +669,17 @@ export class GuestClaimService {
       if (session.evaluation) {
         const evalReceiptKey = makeReceiptKey('progress_evaluation', session.id);
         const expectedEvalFingerprint = computeEntityFingerprint('progress_evaluation', session.evaluation);
+        const existingEvalReceipt = manifest.receipts[evalReceiptKey];
+
+        if (
+          existingEvalReceipt &&
+          (existingEvalReceipt.status === 'remote_conflict' ||
+            existingEvalReceipt.status === 'unauthorized' ||
+            existingEvalReceipt.status === 'error')
+        ) {
+          allVerified = false;
+          continue;
+        }
 
         const { data: evalData, error: evalError } = await client
           .from('progress_evaluations')
@@ -577,7 +690,7 @@ export class GuestClaimService {
         if (evalError) {
           allVerified = false;
           manifest.receipts[evalReceiptKey] = {
-            receiptId: manifest.receipts[evalReceiptKey]?.receiptId || generateUuidV4(),
+            receiptId: existingEvalReceipt?.receiptId || generateUuidV4(),
             claimId: manifest.claimId,
             userId,
             entityType: 'progress_evaluation',
@@ -593,7 +706,7 @@ export class GuestClaimService {
         if (!evalData) {
           allVerified = false;
           manifest.receipts[evalReceiptKey] = {
-            receiptId: manifest.receipts[evalReceiptKey]?.receiptId || generateUuidV4(),
+            receiptId: existingEvalReceipt?.receiptId || generateUuidV4(),
             claimId: manifest.claimId,
             userId,
             entityType: 'progress_evaluation',
@@ -606,11 +719,18 @@ export class GuestClaimService {
           continue;
         }
 
+        const expectedEval = mapEvaluationToDatabaseRow(session.evaluation, session.id, userId);
         const evalMatches =
-          evalData.session_id === session.id &&
-          evalData.user_id === userId &&
-          evalData.comprehension_score === session.evaluation.comprehension &&
-          evalData.fluency_score === session.evaluation.fluency;
+          evalData.session_id === expectedEval.session_id &&
+          evalData.user_id === expectedEval.user_id &&
+          evalData.comprehension_score === expectedEval.comprehension_score &&
+          evalData.construction_score === expectedEval.construction_score &&
+          evalData.vocabulary_score === expectedEval.vocabulary_score &&
+          evalData.fluency_score === expectedEval.fluency_score &&
+          evalData.grammar_score === expectedEval.grammar_score &&
+          evalData.pronunciation_score === expectedEval.pronunciation_score &&
+          evalData.new_words_count === expectedEval.new_words_count &&
+          (evalData.next_goal ?? null) === (expectedEval.next_goal ?? null);
 
         const evalStatus: VerificationStatus =
           evalData.user_id !== userId
@@ -624,7 +744,7 @@ export class GuestClaimService {
         }
 
         manifest.receipts[evalReceiptKey] = {
-          receiptId: manifest.receipts[evalReceiptKey]?.receiptId || generateUuidV4(),
+          receiptId: existingEvalReceipt?.receiptId || generateUuidV4(),
           claimId: manifest.claimId,
           userId,
           entityType: 'progress_evaluation',
@@ -644,8 +764,14 @@ export class GuestClaimService {
       }
       const receiptKey = makeReceiptKey('practice_attempt', attempt.id);
       const expectedFingerprint = computeEntityFingerprint('practice_attempt', attempt);
+      const existingReceipt = manifest.receipts[receiptKey];
 
-      if (manifest.receipts[receiptKey]?.status === 'error') {
+      if (
+        existingReceipt &&
+        (existingReceipt.status === 'remote_conflict' ||
+          existingReceipt.status === 'unauthorized' ||
+          existingReceipt.status === 'error')
+      ) {
         allVerified = false;
         continue;
       }
@@ -659,7 +785,7 @@ export class GuestClaimService {
       if (error) {
         allVerified = false;
         manifest.receipts[receiptKey] = {
-          receiptId: manifest.receipts[receiptKey]?.receiptId || generateUuidV4(),
+          receiptId: existingReceipt?.receiptId || generateUuidV4(),
           claimId: manifest.claimId,
           userId,
           entityType: 'practice_attempt',
@@ -675,7 +801,7 @@ export class GuestClaimService {
       if (!data) {
         allVerified = false;
         manifest.receipts[receiptKey] = {
-          receiptId: manifest.receipts[receiptKey]?.receiptId || generateUuidV4(),
+          receiptId: existingReceipt?.receiptId || generateUuidV4(),
           claimId: manifest.claimId,
           userId,
           entityType: 'practice_attempt',
@@ -688,11 +814,16 @@ export class GuestClaimService {
         continue;
       }
 
+      const expectedRow = mapAttemptToDatabaseRow(attempt, userId);
+      const expectedFeedback = attempt.feedback || expectedRow.feedback_status;
       const remoteMatchesContent =
-        data.id === attempt.id &&
-        data.user_id === userId &&
-        data.pattern_id === attempt.patternId &&
-        data.user_input === attempt.userInput;
+        data.id === expectedRow.id &&
+        data.user_id === expectedRow.user_id &&
+        (data.session_id ?? null) === (expectedRow.session_id ?? null) &&
+        data.pattern_id === expectedRow.pattern_id &&
+        data.user_input === expectedRow.user_input &&
+        data.feedback_status === expectedFeedback &&
+        data.created_at === expectedRow.created_at;
 
       const receiptStatus: VerificationStatus =
         data.user_id !== userId
@@ -706,7 +837,7 @@ export class GuestClaimService {
       }
 
       manifest.receipts[receiptKey] = {
-        receiptId: manifest.receipts[receiptKey]?.receiptId || generateUuidV4(),
+        receiptId: existingReceipt?.receiptId || generateUuidV4(),
         claimId: manifest.claimId,
         userId,
         entityType: 'practice_attempt',
@@ -827,43 +958,74 @@ export class GuestClaimService {
       this.saveGuestAttempts(remainingAttempts);
 
       const guestQueue = this.queueService.getQueue(null);
-      for (const item of guestQueue) {
-        let isItemVerified = false;
+      const remainingQueue = guestQueue.filter((item) => {
         if (item.entityType === 'session' && verifiedSessionIdsToPurge.has(item.id)) {
           const snapSession = snapshotSessionMap.get(item.id);
           if (snapSession && areEntitiesSemanticallyEqual('session', item.payload, snapSession)) {
-            isItemVerified = true;
+            return false;
           }
         } else if (item.entityType === 'practice_attempt' && verifiedAttemptIdsToPurge.has(item.id)) {
           const snapAttempt = snapshotAttemptMap.get(item.id);
           if (snapAttempt && areEntitiesSemanticallyEqual('practice_attempt', item.payload, snapAttempt)) {
-            isItemVerified = true;
+            return false;
           }
         } else if (item.entityType === 'progress_evaluation') {
           const payload = item.payload as ProgressEvaluation & { sessionId?: string };
           if (payload?.sessionId && verifiedSessionIdsToPurge.has(payload.sessionId)) {
-            isItemVerified = true;
+            const snapSession = snapshotSessionMap.get(payload.sessionId);
+            if (
+              snapSession?.evaluation &&
+              areEntitiesSemanticallyEqual('progress_evaluation', payload, snapSession.evaluation)
+            ) {
+              return false;
+            }
           }
         }
+        return true;
+      });
 
-        if (isItemVerified) {
-          this.queueService.removeItem(null, item.id);
-        }
-      }
+      this.queueService.setQueue(null, remainingQueue);
     });
   }
 
   private checkIfAllSnapshotEntitiesPurged(manifest: GuestClaimManifest): boolean {
     const currentSessions = this.loadGuestSessions();
     const currentAttempts = this.loadGuestAttempts();
+    const currentQueue = this.queueService.getQueue(null);
 
     const snapshotSessionIds = new Set(manifest.snapshot.sessions.map((s) => s.id));
     const snapshotAttemptIds = new Set(manifest.snapshot.attempts.map((a) => a.id));
+    const snapshotQueueItemIds = new Set((manifest.snapshot.queueItems || []).map((q) => q.id));
 
     const remainingSnapshotSessions = currentSessions.some((s) => snapshotSessionIds.has(s.id));
     const remainingSnapshotAttempts = currentAttempts.some((a) => snapshotAttemptIds.has(a.id));
+    const remainingSnapshotQueue = currentQueue.some((q) => snapshotQueueItemIds.has(q.id));
 
-    return !remainingSnapshotSessions && !remainingSnapshotAttempts;
+    if (remainingSnapshotSessions || remainingSnapshotAttempts || remainingSnapshotQueue) {
+      return false;
+    }
+
+    for (const session of manifest.snapshot.sessions) {
+      const receipt = manifest.receipts[makeReceiptKey('session', session.id)];
+      if (!receipt || receipt.status !== 'verified') {
+        return false;
+      }
+      if (session.evaluation) {
+        const evalReceipt = manifest.receipts[makeReceiptKey('progress_evaluation', session.id)];
+        if (!evalReceipt || evalReceipt.status !== 'verified') {
+          return false;
+        }
+      }
+    }
+
+    for (const attempt of manifest.snapshot.attempts) {
+      const receipt = manifest.receipts[makeReceiptKey('practice_attempt', attempt.id)];
+      if (!receipt || receipt.status !== 'verified') {
+        return false;
+      }
+    }
+
+    return true;
   }
 
   private shouldAbort(opGen: number, userId: string): boolean {
@@ -905,9 +1067,7 @@ export class GuestClaimService {
   }
 
   private saveManifest(manifest: GuestClaimManifest): void {
-    try {
-      localStorage.setItem(`${GUEST_CLAIM_MANIFEST_KEY_PREFIX}${manifest.userId}`, JSON.stringify(manifest));
-    } catch {}
+    localStorage.setItem(`${GUEST_CLAIM_MANIFEST_KEY_PREFIX}${manifest.userId}`, JSON.stringify(manifest));
   }
 
   private loadGuestSessions(): SessionSummary[] {
@@ -957,14 +1117,10 @@ export class GuestClaimService {
   }
 
   private saveSessionsToKey(key: string, sessions: SessionSummary[]): void {
-    try {
-      localStorage.setItem(key, JSON.stringify(sessions));
-    } catch {}
+    localStorage.setItem(key, JSON.stringify(sessions));
   }
 
   private saveAttemptsToKey(key: string, attempts: PracticeAttempt[]): void {
-    try {
-      localStorage.setItem(key, JSON.stringify(attempts));
-    } catch {}
+    localStorage.setItem(key, JSON.stringify(attempts));
   }
 }

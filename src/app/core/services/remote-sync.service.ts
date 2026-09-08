@@ -2,6 +2,7 @@ import { Injectable, inject, signal, effect, OnDestroy } from '@angular/core';
 import { SupabaseService } from './supabase.service';
 import { SyncQueueService } from './sync-queue.service';
 import { GlobalSyncStatus, getStorageNamespace, SyncQueueItem } from '../models/sync.model';
+import { withStorageLock, getUserStorageLock } from '../utils/storage-lock.util';
 import {
   PracticeAttempt,
   SessionSummary,
@@ -237,96 +238,98 @@ export class RemoteSyncService implements OnDestroy {
       attemptOffset += pageSize;
     }
 
-    if (this.syncGeneration !== opGen || this.activeUserId !== userId) {
-      return;
-    }
-
-    const namespace = getStorageNamespace(userId);
-
-    const localSessions = this.loadLocalSessions(namespace.sessionsKey);
-    const localSessionMap = new Map(localSessions.map((s) => [s.id, s]));
-    const mergedSessions: SessionSummary[] = [...localSessions];
-
-    for (const row of remoteSessions) {
-      const existing = localSessionMap.get(row.id);
-      if (existing) {
-        if (existing.syncStatus === 'pending') {
-          const isIdentical =
-            row.session_date === existing.date &&
-            row.focus_theme === existing.theme &&
-            row.duration_minutes === existing.durationMinutes &&
-            (row.notes ?? undefined) === (existing.notes ?? undefined);
-          if (isIdentical) {
-            existing.syncStatus = 'synced';
-            this.queueService.removeItem(userId, existing.id);
-          } else {
-            existing.syncStatus = 'conflict';
-            this.queueService.updateItem(userId, existing.id, {
-              status: 'conflict',
-              lastError: 'Remote record exists with different content',
-            });
-            this.syncStatus.set('conflict');
-          }
-          const idx = mergedSessions.findIndex((s) => s.id === row.id);
-          if (idx >= 0) {
-            mergedSessions[idx] = existing;
-          }
-        } else if (existing.syncStatus !== 'conflict' && existing.syncStatus !== 'error') {
-          const updated = mapDatabaseRowToSession(row, evalMap.get(row.id));
-          const idx = mergedSessions.findIndex((s) => s.id === row.id);
-          if (idx >= 0) {
-            mergedSessions[idx] = updated;
-          }
-        }
-      } else {
-        const mapped = mapDatabaseRowToSession(row, evalMap.get(row.id));
-        mergedSessions.push(mapped);
-        localSessionMap.set(mapped.id, mapped);
+    await withStorageLock(getUserStorageLock(userId), async () => {
+      if (this.syncGeneration !== opGen || this.activeUserId !== userId) {
+        return;
       }
-    }
-    localStorage.setItem(namespace.sessionsKey, JSON.stringify(mergedSessions));
 
-    const localAttempts = this.loadLocalAttempts(namespace.attemptsKey);
-    const localAttemptMap = new Map(localAttempts.map((a) => [a.id, a]));
-    const mergedAttempts: PracticeAttempt[] = [...localAttempts];
+      const namespace = getStorageNamespace(userId);
 
-    for (const row of remoteAttempts) {
-      const existing = localAttemptMap.get(row.id);
-      if (existing) {
-        if (existing.syncStatus === 'pending') {
-          const isIdentical =
-            row.pattern_id === existing.patternId &&
-            row.user_input === existing.userInput;
-          if (isIdentical) {
-            existing.syncStatus = 'synced';
-            this.queueService.removeItem(userId, existing.id);
-          } else {
-            existing.syncStatus = 'conflict';
-            this.queueService.updateItem(userId, existing.id, {
-              status: 'conflict',
-              lastError: 'Remote record exists with different content',
-            });
-            this.syncStatus.set('conflict');
+      const localSessions = this.loadLocalSessions(namespace.sessionsKey);
+      const localSessionMap = new Map(localSessions.map((s) => [s.id, s]));
+      const mergedSessions: SessionSummary[] = [...localSessions];
+
+      for (const row of remoteSessions) {
+        const existing = localSessionMap.get(row.id);
+        if (existing) {
+          if (existing.syncStatus === 'pending') {
+            const isIdentical =
+              row.session_date === existing.date &&
+              row.focus_theme === existing.theme &&
+              row.duration_minutes === existing.durationMinutes &&
+              (row.notes ?? undefined) === (existing.notes ?? undefined);
+            if (isIdentical) {
+              existing.syncStatus = 'synced';
+              this.queueService.removeItem(userId, existing.id);
+            } else {
+              existing.syncStatus = 'conflict';
+              this.queueService.updateItem(userId, existing.id, {
+                status: 'conflict',
+                lastError: 'Remote record exists with different content',
+              });
+              this.syncStatus.set('conflict');
+            }
+            const idx = mergedSessions.findIndex((s) => s.id === row.id);
+            if (idx >= 0) {
+              mergedSessions[idx] = existing;
+            }
+          } else if (existing.syncStatus !== 'conflict' && existing.syncStatus !== 'error') {
+            const updated = mapDatabaseRowToSession(row, evalMap.get(row.id));
+            const idx = mergedSessions.findIndex((s) => s.id === row.id);
+            if (idx >= 0) {
+              mergedSessions[idx] = updated;
+            }
           }
-          const idx = mergedAttempts.findIndex((a) => a.id === row.id);
-          if (idx >= 0) {
-            mergedAttempts[idx] = existing;
-          }
-        } else if (existing.syncStatus !== 'conflict' && existing.syncStatus !== 'error') {
-          const updated = mapDatabaseRowToAttempt(row);
-          const idx = mergedAttempts.findIndex((a) => a.id === row.id);
-          if (idx >= 0) {
-            mergedAttempts[idx] = updated;
-          }
+        } else {
+          const mapped = mapDatabaseRowToSession(row, evalMap.get(row.id));
+          mergedSessions.push(mapped);
+          localSessionMap.set(mapped.id, mapped);
         }
-      } else {
-        const mapped = mapDatabaseRowToAttempt(row);
-        mergedAttempts.push(mapped);
-        localAttemptMap.set(mapped.id, mapped);
       }
-    }
-    mergedAttempts.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-    localStorage.setItem(namespace.attemptsKey, JSON.stringify(mergedAttempts));
+      localStorage.setItem(namespace.sessionsKey, JSON.stringify(mergedSessions));
+
+      const localAttempts = this.loadLocalAttempts(namespace.attemptsKey);
+      const localAttemptMap = new Map(localAttempts.map((a) => [a.id, a]));
+      const mergedAttempts: PracticeAttempt[] = [...localAttempts];
+
+      for (const row of remoteAttempts) {
+        const existing = localAttemptMap.get(row.id);
+        if (existing) {
+          if (existing.syncStatus === 'pending') {
+            const isIdentical =
+              row.pattern_id === existing.patternId &&
+              row.user_input === existing.userInput;
+            if (isIdentical) {
+              existing.syncStatus = 'synced';
+              this.queueService.removeItem(userId, existing.id);
+            } else {
+              existing.syncStatus = 'conflict';
+              this.queueService.updateItem(userId, existing.id, {
+                status: 'conflict',
+                lastError: 'Remote record exists with different content',
+              });
+              this.syncStatus.set('conflict');
+            }
+            const idx = mergedAttempts.findIndex((a) => a.id === row.id);
+            if (idx >= 0) {
+              mergedAttempts[idx] = existing;
+            }
+          } else if (existing.syncStatus !== 'conflict' && existing.syncStatus !== 'error') {
+            const updated = mapDatabaseRowToAttempt(row);
+            const idx = mergedAttempts.findIndex((a) => a.id === row.id);
+            if (idx >= 0) {
+              mergedAttempts[idx] = updated;
+            }
+          }
+        } else {
+          const mapped = mapDatabaseRowToAttempt(row);
+          mergedAttempts.push(mapped);
+          localAttemptMap.set(mapped.id, mapped);
+        }
+      }
+      mergedAttempts.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+      localStorage.setItem(namespace.attemptsKey, JSON.stringify(mergedAttempts));
+    });
   }
 
   async pushPending(userId: string, opGen = this.syncGeneration): Promise<void> {
@@ -374,15 +377,16 @@ export class RemoteSyncService implements OnDestroy {
               remoteRow.user_id === userId &&
               remoteRow.session_date === row.session_date &&
               remoteRow.focus_theme === row.focus_theme &&
-              remoteRow.duration_minutes === row.duration_minutes;
+              remoteRow.duration_minutes === row.duration_minutes &&
+              (remoteRow.notes === undefined || (remoteRow.notes ?? null) === (row.notes ?? null));
 
             if (isMatch) {
-              const saved = this.markLocalSessionStatus(userId, item.id, 'synced');
+              const saved = await this.markLocalSessionStatus(userId, item.id, 'synced');
               if (saved) {
                 this.safelyRemoveFromQueue(userId, item);
               }
             } else {
-              this.markLocalSessionStatus(userId, item.id, 'conflict');
+              await this.markLocalSessionStatus(userId, item.id, 'conflict');
               this.queueService.updateItem(userId, item.id, {
                 status: 'conflict',
                 lastError: 'Remote record exists with different content',
@@ -411,15 +415,16 @@ export class RemoteSyncService implements OnDestroy {
                 remoteRow.user_id === userId &&
                 remoteRow.session_date === row.session_date &&
                 remoteRow.focus_theme === row.focus_theme &&
-                remoteRow.duration_minutes === row.duration_minutes;
+                remoteRow.duration_minutes === row.duration_minutes &&
+                (remoteRow.notes === undefined || (remoteRow.notes ?? null) === (row.notes ?? null));
 
               if (isMatch) {
-                const saved = this.markLocalSessionStatus(userId, item.id, 'synced');
+                const saved = await this.markLocalSessionStatus(userId, item.id, 'synced');
                 if (saved) {
                   this.safelyRemoveFromQueue(userId, item);
                 }
               } else {
-                this.markLocalSessionStatus(userId, item.id, 'conflict');
+                await this.markLocalSessionStatus(userId, item.id, 'conflict');
                 this.queueService.updateItem(userId, item.id, {
                   status: 'conflict',
                   lastError: 'Remote record exists with different content',
@@ -429,7 +434,7 @@ export class RemoteSyncService implements OnDestroy {
             }
           } else if (this.isPermanentError(insertError)) {
             this.queueService.moveToDeadletter(userId, item.id, insertError.message);
-            this.markLocalSessionStatus(userId, item.id, 'error');
+            await this.markLocalSessionStatus(userId, item.id, 'error');
             this.syncStatus.set('error');
           } else {
             this.handleTransientError(userId, item.id);
@@ -536,15 +541,18 @@ export class RemoteSyncService implements OnDestroy {
               remoteRow.id === item.id &&
               remoteRow.user_id === userId &&
               remoteRow.pattern_id === row.pattern_id &&
-              remoteRow.user_input === row.user_input;
+              remoteRow.user_input === row.user_input &&
+              (remoteRow.session_id === undefined || (remoteRow.session_id ?? null) === (row.session_id ?? null)) &&
+              (remoteRow.feedback_status === undefined || remoteRow.feedback_status === row.feedback_status) &&
+              (remoteRow.created_at === undefined || remoteRow.created_at === row.created_at);
 
             if (isMatch) {
-              const saved = this.markLocalAttemptStatus(userId, item.id, 'synced');
+              const saved = await this.markLocalAttemptStatus(userId, item.id, 'synced');
               if (saved) {
                 this.safelyRemoveFromQueue(userId, item);
               }
             } else {
-              this.markLocalAttemptStatus(userId, item.id, 'conflict');
+              await this.markLocalAttemptStatus(userId, item.id, 'conflict');
               this.queueService.updateItem(userId, item.id, {
                 status: 'conflict',
                 lastError: 'Remote record exists with different content',
@@ -572,15 +580,18 @@ export class RemoteSyncService implements OnDestroy {
                 remoteRow.id === item.id &&
                 remoteRow.user_id === userId &&
                 remoteRow.pattern_id === row.pattern_id &&
-                remoteRow.user_input === row.user_input;
+                remoteRow.user_input === row.user_input &&
+                (remoteRow.session_id === undefined || (remoteRow.session_id ?? null) === (row.session_id ?? null)) &&
+                (remoteRow.feedback_status === undefined || remoteRow.feedback_status === row.feedback_status) &&
+                (remoteRow.created_at === undefined || remoteRow.created_at === row.created_at);
 
               if (isMatch) {
-                const saved = this.markLocalAttemptStatus(userId, item.id, 'synced');
+                const saved = await this.markLocalAttemptStatus(userId, item.id, 'synced');
                 if (saved) {
                   this.safelyRemoveFromQueue(userId, item);
                 }
               } else {
-                this.markLocalAttemptStatus(userId, item.id, 'conflict');
+                await this.markLocalAttemptStatus(userId, item.id, 'conflict');
                 this.queueService.updateItem(userId, item.id, {
                   status: 'conflict',
                   lastError: 'Remote record exists with different content',
@@ -590,7 +601,7 @@ export class RemoteSyncService implements OnDestroy {
             }
           } else if (this.isPermanentError(insertError)) {
             this.queueService.moveToDeadletter(userId, item.id, insertError.message);
-            this.markLocalAttemptStatus(userId, item.id, 'error');
+            await this.markLocalAttemptStatus(userId, item.id, 'error');
             this.syncStatus.set('error');
           } else {
             this.handleTransientError(userId, item.id);
@@ -708,33 +719,37 @@ export class RemoteSyncService implements OnDestroy {
     }
   }
 
-  private markLocalAttemptStatus(userId: string, attemptId: string, status: 'synced' | 'conflict' | 'error'): boolean {
+  private async markLocalAttemptStatus(userId: string, attemptId: string, status: 'synced' | 'conflict' | 'error'): Promise<boolean> {
     const namespace = getStorageNamespace(userId);
-    try {
-      const attempts = this.loadLocalAttempts(namespace.attemptsKey);
-      const idx = attempts.findIndex((a) => a.id === attemptId);
-      if (idx >= 0) {
-        attempts[idx].syncStatus = status;
-        localStorage.setItem(namespace.attemptsKey, JSON.stringify(attempts));
+    return await withStorageLock(getUserStorageLock(userId), async () => {
+      try {
+        const attempts = this.loadLocalAttempts(namespace.attemptsKey);
+        const idx = attempts.findIndex((a) => a.id === attemptId);
+        if (idx >= 0) {
+          attempts[idx].syncStatus = status;
+          localStorage.setItem(namespace.attemptsKey, JSON.stringify(attempts));
+        }
+        return true;
+      } catch {
+        return false;
       }
-      return true;
-    } catch {
-      return false;
-    }
+    });
   }
 
-  private markLocalSessionStatus(userId: string, sessionId: string, status: 'synced' | 'conflict' | 'error'): boolean {
+  private async markLocalSessionStatus(userId: string, sessionId: string, status: 'synced' | 'conflict' | 'error'): Promise<boolean> {
     const namespace = getStorageNamespace(userId);
-    try {
-      const sessions = this.loadLocalSessions(namespace.sessionsKey);
-      const idx = sessions.findIndex((s) => s.id === sessionId);
-      if (idx >= 0) {
-        sessions[idx].syncStatus = status;
-        localStorage.setItem(namespace.sessionsKey, JSON.stringify(sessions));
+    return await withStorageLock(getUserStorageLock(userId), async () => {
+      try {
+        const sessions = this.loadLocalSessions(namespace.sessionsKey);
+        const idx = sessions.findIndex((s) => s.id === sessionId);
+        if (idx >= 0) {
+          sessions[idx].syncStatus = status;
+          localStorage.setItem(namespace.sessionsKey, JSON.stringify(sessions));
+        }
+        return true;
+      } catch {
+        return false;
       }
-      return true;
-    } catch {
-      return false;
-    }
+    });
   }
 }

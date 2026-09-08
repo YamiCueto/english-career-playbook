@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { withStorageLock, clearInMemoryLocks, GUEST_STORAGE_LOCK } from './storage-lock.util';
+import { withStorageLock, clearInMemoryLocks, GUEST_STORAGE_LOCK, getUserStorageLock, getClaimLock } from './storage-lock.util';
 
 describe('storage-lock.util', () => {
   beforeEach(() => {
@@ -156,5 +156,10 @@ describe('storage-lock.util', () => {
         writable: true,
       });
     }
+  });
+
+  it('generates predictable lock names for user storage and claim', () => {
+    expect(getUserStorageLock('user-123')).toBe('ecp_user_storage_user-123');
+    expect(getClaimLock('user-123')).toBe('ecp_claim_user-123');
   });
 });
