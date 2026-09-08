@@ -3,12 +3,14 @@ import { CommonModule } from '@angular/common';
 import { RouterOutlet, RouterLink, RouterLinkActive } from '@angular/router';
 import { SupabaseService } from './core/services/supabase.service';
 import { RemoteSyncService } from './core/services/remote-sync.service';
+import { GuestClaimService } from './core/services/guest-claim.service';
 import { AuthModalComponent } from './features/auth/auth-modal.component';
+import { GuestClaimModalComponent } from './features/guest-claim/guest-claim-modal.component';
 
 @Component({
   selector: 'app-root',
   standalone: true,
-  imports: [CommonModule, RouterOutlet, RouterLink, RouterLinkActive, AuthModalComponent],
+  imports: [CommonModule, RouterOutlet, RouterLink, RouterLinkActive, AuthModalComponent, GuestClaimModalComponent],
   templateUrl: './app.component.html',
   styleUrl: './app.component.css',
 })
@@ -16,6 +18,7 @@ export class App {
   private elementRef = inject(ElementRef);
   public supabaseService = inject(SupabaseService);
   private remoteSync = inject(RemoteSyncService);
+  public guestClaimService = inject(GuestClaimService);
 
   readonly syncStatus = this.remoteSync.syncStatus;
 
@@ -137,7 +140,7 @@ export class App {
 
   @HostListener('window:keydown.escape')
   handleEscape(): void {
-    if (this.isAuthModalOpen()) {
+    if (this.isAuthModalOpen() || this.guestClaimService.isClaimPromptVisible()) {
       return;
     }
     if (this.isUserMenuOpen()) {

@@ -301,5 +301,23 @@ describe('App', () => {
       const instance2 = TestBed.inject(RemoteSyncService);
       expect(instance1).toBe(instance2);
     });
+
+    it('renders guest claim modal when prompt is visible', async () => {
+      app.guestClaimService.isClaimPromptVisible.set(true);
+      fixture.detectChanges();
+      await fixture.whenStable();
+
+      const modal = fixture.nativeElement.querySelector('.claim-modal-card');
+      expect(modal).toBeTruthy();
+    });
+
+    it('does not render guest claim modal when prompt is not visible', async () => {
+      app.guestClaimService.isClaimPromptVisible.set(false);
+      fixture.detectChanges();
+      await fixture.whenStable();
+
+      const modal = fixture.nativeElement.querySelector('.claim-modal-card');
+      expect(modal).toBeNull();
+    });
   });
 });

@@ -1,0 +1,125 @@
+<div
+  *ngIf="isVisible()"
+  class="claim-modal-backdrop"
+  role="presentation"
+>
+  <div
+    class="claim-modal-card"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="claim-modal-title"
+    aria-describedby="claim-modal-desc"
+  >
+    <div class="claim-modal-header">
+      <div class="header-icon-wrapper" aria-hidden="true">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M19 16.9A5 5 0 0 0 18 7h-1.26A8 8 0 1 0 4 15.25"></path>
+          <polyline points="8 17 12 21 16 17"></polyline>
+          <line x1="12" y1="12" x2="12" y2="21"></line>
+        </svg>
+      </div>
+      <div class="header-text">
+        <h2 id="claim-modal-title" class="claim-title">Progreso previo encontrado</h2>
+        <p id="claim-modal-desc" class="claim-subtitle">
+          Tienes datos de práctica guardados en este navegador antes de iniciar sesión.
+        </p>
+      </div>
+      <button
+        type="button"
+        class="close-btn"
+        (click)="handlePostpone()"
+        [disabled]="isProcessing()"
+        aria-label="Cerrar y posponer decisión"
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+    </div>
+
+    <div class="claim-body">
+      <div class="summary-card" *ngIf="summary() as sum">
+        <div class="summary-metric">
+          <span class="metric-value">{{ sum.sessionsCount }}</span>
+          <span class="metric-label">Sesiones</span>
+        </div>
+        <div class="summary-divider" aria-hidden="true"></div>
+        <div class="summary-metric">
+          <span class="metric-value">{{ sum.attemptsCount }}</span>
+          <span class="metric-label">Oraciones</span>
+        </div>
+        <div class="summary-divider" aria-hidden="true" *ngIf="sum.evaluationsCount > 0"></div>
+        <div class="summary-metric" *ngIf="sum.evaluationsCount > 0">
+          <span class="metric-value">{{ sum.evaluationsCount }}</span>
+          <span class="metric-label">Evaluaciones</span>
+        </div>
+      </div>
+
+      <div *ngIf="summary().hasOrphans" class="orphan-alert" role="status">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="12" y1="8" x2="12" y2="12"></line>
+          <line x1="12" y1="16" x2="12.01" y2="16"></line>
+        </svg>
+        <span>
+          {{ summary().orphanCount }} oraciones no asociadas a una sesión se conservarán en este equipo sin mutar.
+        </span>
+      </div>
+
+      <div *ngIf="isProcessing()" class="processing-indicator" role="status" aria-live="polite">
+        <div class="spinner" aria-hidden="true"></div>
+        <span class="processing-text">{{ statusMessage() }}</span>
+      </div>
+
+      <div *ngIf="error() as errMsg" class="error-banner" role="alert">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="12" y1="8" x2="12" y2="12"></line>
+          <line x1="12" y1="16" x2="12.01" y2="16"></line>
+        </svg>
+        <span>{{ errMsg }}</span>
+      </div>
+    </div>
+
+    <div class="claim-footer">
+      <button
+        #primaryActionBtn
+        type="button"
+        class="claim-primary-btn"
+        (click)="handleClaim()"
+        [disabled]="isProcessing()"
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path d="M19 16.9A5 5 0 0 0 18 7h-1.26A8 8 0 1 0 4 15.25"></path>
+          <polyline points="8 17 12 21 16 17"></polyline>
+          <line x1="12" y1="12" x2="12" y2="21"></line>
+        </svg>
+        <span>{{ isProcessing() ? 'Transfiriendo...' : 'Importar a mi cuenta' }}</span>
+      </button>
+
+      <button
+        type="button"
+        class="claim-secondary-btn"
+        (click)="handleKeepSeparate()"
+        [disabled]="isProcessing()"
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+          <line x1="8" y1="21" x2="16" y2="21"></line>
+          <line x1="12" y1="17" x2="12" y2="21"></line>
+        </svg>
+        <span>Mantener en este equipo</span>
+      </button>
+
+      <button
+        type="button"
+        class="claim-tertiary-btn"
+        (click)="handlePostpone()"
+        [disabled]="isProcessing()"
+      >
+        Recordármelo más tarde
+      </button>
+    </div>
+  </div>
+</div>
