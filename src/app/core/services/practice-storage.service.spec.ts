@@ -1,22 +1,38 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { signal } from '@angular/core';
 import { PracticeStorageService } from './practice-storage.service';
 import { SupabaseService } from './supabase.service';
 import { isValidUuidV4 } from '../utils/uuid.util';
 import { SyncQueueService } from './sync-queue.service';
+import { RemoteSyncService } from './remote-sync.service';
 import { User } from '@supabase/supabase-js';
+import { clearInMemoryLocks, GUEST_STORAGE_LOCK, withStorageLock } from '../utils/storage-lock.util';
+import {
+  StorageMigrationService,
+  LEGACY_ATTEMPTS_KEY,
+  STORAGE_VERSION_KEY,
+  MIGRATION_MANIFEST_KEY,
+} from './storage-migration.service';
 
 describe('PracticeStorageService', () => {
   let service: PracticeStorageService;
   let queueService: SyncQueueService;
+  let remoteSync: RemoteSyncService;
   const currentUserSignal = signal<User | null>(null);
 
   beforeEach(() => {
     localStorage.clear();
+    clearInMemoryLocks();
     currentUserSignal.set(null);
 
     const mockSupabase = {
       currentUser: currentUserSignal,
+    };
+
+    const mockRemoteSync = {
+      syncStatus: signal<'idle' | 'syncing' | 'error'>('idle'),
+      requestSync: vi.fn().mockResolvedValue(undefined),
     };
 
     TestBed.configureTestingModule({
@@ -24,19 +40,22 @@ describe('PracticeStorageService', () => {
         PracticeStorageService,
         SyncQueueService,
         { provide: SupabaseService, useValue: mockSupabase },
+        { provide: RemoteSyncService, useValue: mockRemoteSync },
       ],
     });
 
     service = TestBed.inject(PracticeStorageService);
     queueService = TestBed.inject(SyncQueueService);
+    remoteSync = TestBed.inject(RemoteSyncService);
   });
 
   afterEach(() => {
     localStorage.clear();
+    clearInMemoryLocks();
   });
 
-  it('should save and retrieve attempts locally with valid UUID v4', () => {
-    const attempt = service.saveAttempt({
+  it('should save and retrieve attempts locally with valid UUID v4', async () => {
+    const attempt = await service.saveAttempt({
       patternId: 'pattern-a',
       userInput: 'I work with Angular',
       isValid: true,
@@ -57,8 +76,8 @@ describe('PracticeStorageService', () => {
     expect(queue[0].entityType).toBe('practice_attempt');
   });
 
-  it('should save session and evaluation and enqueue them in dependency order', () => {
-    service.saveSession({
+  it('should save session and evaluation and enqueue them in dependency order', async () => {
+    await service.saveSession({
       id: 'session-local-1',
       date: '2026-09-07',
       durationMinutes: 30,
@@ -85,8 +104,8 @@ describe('PracticeStorageService', () => {
     expect(queue[1].entityType).toBe('progress_evaluation');
   });
 
-  it('should isolate storage and queue between guest and authenticated user', () => {
-    service.saveAttempt({
+  it('should isolate storage and queue between guest and authenticated user', async () => {
+    await service.saveAttempt({
       patternId: 'pattern-a',
       userInput: 'Guest sentence',
       isValid: true,
@@ -106,7 +125,7 @@ describe('PracticeStorageService', () => {
 
     expect(service.getAttempts().length).toBe(0);
 
-    service.saveAttempt({
+    await service.saveAttempt({
       patternId: 'pattern-b',
       userInput: 'Authenticated user sentence',
       isValid: true,
@@ -121,7 +140,7 @@ describe('PracticeStorageService', () => {
     expect(service.getAttempts()[0].userInput).toBe('Guest sentence');
   });
 
-  it('should guarantee user A and user B do not share records and switching namespaces does not copy data', () => {
+  it('should guarantee user A and user B do not share records and switching namespaces does not copy data', async () => {
     const userA: User = {
       id: 'usr-AAA-111',
       app_metadata: {},
@@ -138,7 +157,7 @@ describe('PracticeStorageService', () => {
     };
 
     currentUserSignal.set(userA);
-    service.saveAttempt({
+    await service.saveAttempt({
       patternId: 'pattern-a',
       userInput: 'User A sentence',
       isValid: true,
@@ -149,7 +168,7 @@ describe('PracticeStorageService', () => {
     currentUserSignal.set(userB);
     expect(service.getAttempts().length).toBe(0);
 
-    service.saveAttempt({
+    await service.saveAttempt({
       patternId: 'pattern-c',
       userInput: 'User B sentence',
       isValid: true,
@@ -162,8 +181,8 @@ describe('PracticeStorageService', () => {
     expect(service.getAttempts()[0].userInput).toBe('User A sentence');
   });
 
-  it('should ensure deadletter does not delete the source record from local storage', () => {
-    const attempt = service.saveAttempt({
+  it('should ensure deadletter does not delete the source record from local storage', async () => {
+    const attempt = await service.saveAttempt({
       patternId: 'pattern-a',
       userInput: 'Attempt for deadletter check',
       isValid: true,
@@ -182,8 +201,8 @@ describe('PracticeStorageService', () => {
     expect(sourceAttempts[0].userInput).toBe('Attempt for deadletter check');
   });
 
-  it('should confirm that zero remote Supabase network calls are made during save and read', () => {
-    const attempt = service.saveAttempt({
+  it('should confirm that zero remote Supabase network calls are made during save and read', async () => {
+    const attempt = await service.saveAttempt({
       patternId: 'pattern-d',
       userInput: 'Offline first sentence',
       isValid: true,
@@ -191,5 +210,236 @@ describe('PracticeStorageService', () => {
 
     expect(attempt.id).toBeDefined();
     expect(service.getAttempts().length).toBe(1);
+  });
+
+  it('should handle two concurrent guest writes without data loss', async () => {
+    const [attempt1, attempt2] = await Promise.all([
+      service.saveAttempt({
+        patternId: 'pattern-a',
+        userInput: 'Concurrent sentence 1',
+        isValid: true,
+      }),
+      service.saveAttempt({
+        patternId: 'pattern-b',
+        userInput: 'Concurrent sentence 2',
+        isValid: true,
+      }),
+    ]);
+
+    expect(attempt1.id).toBeDefined();
+    expect(attempt2.id).toBeDefined();
+
+    const attempts = service.getAttempts();
+    expect(attempts.length).toBe(2);
+    const texts = attempts.map((a) => a.userInput);
+    expect(texts).toContain('Concurrent sentence 1');
+    expect(texts).toContain('Concurrent sentence 2');
+
+    const queue = queueService.getQueue(null);
+    expect(queue.length).toBe(2);
+  });
+
+  it('should reject operation if authenticated user changes during lock wait', async () => {
+    const userA: User = {
+      id: 'usr-AAA-111',
+      app_metadata: {},
+      user_metadata: {},
+      aud: 'authenticated',
+      created_at: '2026-09-07T00:00:00.000Z',
+    };
+    const userB: User = {
+      id: 'usr-BBB-222',
+      app_metadata: {},
+      user_metadata: {},
+      aud: 'authenticated',
+      created_at: '2026-09-07T00:00:00.000Z',
+    };
+
+    currentUserSignal.set(userA);
+
+    let releaseLock!: () => void;
+    const lockHeldPromise = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+
+    const lockPromise = withStorageLock('ecp_user_storage_' + userA.id, async () => {
+      await lockHeldPromise;
+    });
+
+    const savePromise = service.saveAttempt({
+      patternId: 'pattern-a',
+      userInput: 'Attempt started under User A',
+      isValid: true,
+    });
+
+    currentUserSignal.set(userB);
+    releaseLock();
+    await lockPromise;
+
+    await expect(savePromise).rejects.toThrow('Storage context changed during operation');
+  });
+
+  it('should preserve guest destination and avoid polluting authenticated account if login occurs during wait', async () => {
+    const userA: User = {
+      id: 'usr-AAA-111',
+      app_metadata: {},
+      user_metadata: {},
+      aud: 'authenticated',
+      created_at: '2026-09-07T00:00:00.000Z',
+    };
+
+    let releaseLock!: () => void;
+    const lockHeldPromise = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+
+    const lockPromise = withStorageLock(GUEST_STORAGE_LOCK, async () => {
+      await lockHeldPromise;
+    });
+
+    const savePromise = service.saveAttempt({
+      patternId: 'pattern-a',
+      userInput: 'Guest sentence before login',
+      isValid: true,
+    });
+
+    currentUserSignal.set(userA);
+    releaseLock();
+    await lockPromise;
+
+    const saved = await savePromise;
+    expect(saved.userInput).toBe('Guest sentence before login');
+
+    expect(service.getAttempts().length).toBe(0);
+    expect(queueService.getQueue(userA.id).length).toBe(0);
+
+    currentUserSignal.set(null);
+    expect(service.getAttempts().length).toBe(1);
+    expect(service.getAttempts()[0].userInput).toBe('Guest sentence before login');
+    expect(queueService.getQueue(null).length).toBe(1);
+  });
+
+  it('should serialize concurrent writes using fallback when Web Locks is unavailable', async () => {
+    const originalNavigatorLocks = (navigator as unknown as { locks?: unknown }).locks;
+    try {
+      Object.defineProperty(navigator, 'locks', {
+        value: undefined,
+        configurable: true,
+        writable: true,
+      });
+
+      const [attempt1, attempt2] = await Promise.all([
+        service.saveAttempt({
+          patternId: 'pattern-a',
+          userInput: 'Fallback sentence 1',
+          isValid: true,
+        }),
+        service.saveAttempt({
+          patternId: 'pattern-b',
+          userInput: 'Fallback sentence 2',
+          isValid: true,
+        }),
+      ]);
+
+      expect(attempt1.id).toBeDefined();
+      expect(attempt2.id).toBeDefined();
+
+      const attempts = service.getAttempts();
+      expect(attempts.length).toBe(2);
+      const queue = queueService.getQueue(null);
+      expect(queue.length).toBe(2);
+    } finally {
+      Object.defineProperty(navigator, 'locks', {
+        value: originalNavigatorLocks,
+        configurable: true,
+        writable: true,
+      });
+    }
+  });
+
+  it('should trigger remoteSync.requestSync for authenticated operations without regression', async () => {
+    const userA: User = {
+      id: 'usr-AAA-111',
+      app_metadata: {},
+      user_metadata: {},
+      aud: 'authenticated',
+      created_at: '2026-09-07T00:00:00.000Z',
+    };
+    currentUserSignal.set(userA);
+
+    await service.saveAttempt({
+      patternId: 'pattern-a',
+      userInput: 'Authenticated attempt with sync',
+      isValid: true,
+    });
+
+    expect(remoteSync.requestSync).toHaveBeenCalledTimes(1);
+
+    await service.saveSession({
+      id: 'session-auth-1',
+      date: '2026-09-08',
+      durationMinutes: 15,
+      theme: 'Leadership',
+    });
+
+    expect(remoteSync.requestSync).toHaveBeenCalledTimes(2);
+    expect(service.getAttempts().length).toBe(1);
+    expect(service.getSessions().length).toBe(1);
+  });
+
+  it('should guarantee no data loss between pending migration and concurrent guest saveAttempt', async () => {
+    const legacyAttempts = [
+      {
+        id: 'legacy-attempt-1',
+        patternId: 'pattern-a',
+        userInput: 'Legacy practice attempt',
+        timestamp: '2026-09-07T10:00:00.000Z',
+        isValid: true,
+      },
+    ];
+    localStorage.setItem(LEGACY_ATTEMPTS_KEY, JSON.stringify(legacyAttempts));
+    localStorage.removeItem(STORAGE_VERSION_KEY);
+    localStorage.removeItem(MIGRATION_MANIFEST_KEY);
+
+    let releaseLock!: () => void;
+    const lockHeld = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+
+    let lockAcquired!: () => void;
+    const lockIsActive = new Promise<void>((resolve) => {
+      lockAcquired = resolve;
+    });
+
+    const migrationService = TestBed.inject(StorageMigrationService);
+
+    const blockerPromise = withStorageLock(GUEST_STORAGE_LOCK, async () => {
+      lockAcquired();
+      await lockHeld;
+    });
+
+    await lockIsActive;
+
+    const migrationPromise = migrationService.migrate();
+
+    const savePromise = service.saveAttempt({
+      patternId: 'pattern-b',
+      userInput: 'Concurrent guest attempt',
+      isValid: true,
+    });
+
+    releaseLock();
+    await blockerPromise;
+
+    const [migrationResult, savedAttempt] = await Promise.all([migrationPromise, savePromise]);
+
+    expect(migrationResult.success).toBe(true);
+    expect(savedAttempt.userInput).toBe('Concurrent guest attempt');
+
+    const attempts = service.getAttempts();
+    expect(attempts.length).toBe(2);
+    const texts = attempts.map((a) => a.userInput);
+    expect(texts).toContain('Legacy practice attempt');
+    expect(texts).toContain('Concurrent guest attempt');
   });
 });

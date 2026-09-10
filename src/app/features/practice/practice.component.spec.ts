@@ -1,3 +1,4 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { PracticeComponent } from './practice.component';
 import { PracticeStorageService } from '../../core/services/practice-storage.service';
@@ -45,70 +46,103 @@ describe('PracticeComponent', () => {
     expect(component.userInput).toBe('Could you clarify ');
   });
 
-  it('should diagnose "I living" mistake', () => {
+  it('should diagnose "I living" mistake', async () => {
     component.userInput = 'I living in Colombia';
-    component.evaluateSentence();
+    await component.evaluateSentence();
     expect(component.validation?.isValid).toBe(false);
     expect(component.validation?.message).toContain('I living');
   });
 
-  it('should diagnose missing article in profession', () => {
+  it('should diagnose missing article in profession', async () => {
     component.userInput = 'I am full stack engineer';
-    component.evaluateSentence();
+    await component.evaluateSentence();
     expect(component.validation?.isValid).toBe(false);
     expect(component.validation?.message).toContain('omisión de artículo profesional');
   });
 
-  it('should validate valid Pattern A sentence and save attempt', () => {
+  it('should validate valid Pattern A sentence and save attempt', async () => {
     component.userInput = 'I develop scalable backend APIs';
-    component.evaluateSentence();
+    await component.evaluateSentence();
     expect(component.validation?.isValid).toBe(true);
     expect(component.attempts.length).toBe(1);
     expect(component.attempts[0].isValid).toBe(true);
   });
 
-  it('should validate Pattern B experience phrase requirement', () => {
+  it('should validate Pattern B experience phrase requirement', async () => {
     component.selectPattern(component.patterns[1]);
     component.userInput = 'I like pizza today';
-    component.evaluateSentence();
+    await component.evaluateSentence();
     expect(component.validation?.isValid).toBe(false);
 
     component.userInput = 'I have experience developing microservices with Spring';
-    component.evaluateSentence();
+    await component.evaluateSentence();
     expect(component.validation?.isValid).toBe(true);
   });
 
-  it('should validate Pattern C past tense verb requirement', () => {
+  it('should validate Pattern C past tense verb requirement', async () => {
     component.selectPattern(component.patterns[2]);
     component.userInput = 'I build the service';
-    component.evaluateSentence();
+    await component.evaluateSentence();
     expect(component.validation?.isValid).toBe(false);
 
     component.userInput = 'I modernized a legacy banking system';
-    component.evaluateSentence();
+    await component.evaluateSentence();
     expect(component.validation?.isValid).toBe(true);
   });
 
-  it('should validate Pattern D intent requirement', () => {
+  it('should validate Pattern D intent requirement', async () => {
     component.selectPattern(component.patterns[3]);
     component.userInput = 'I code every single day';
-    component.evaluateSentence();
+    await component.evaluateSentence();
     expect(component.validation?.isValid).toBe(false);
 
     component.userInput = 'I would like to work on global technology products';
-    component.evaluateSentence();
+    await component.evaluateSentence();
     expect(component.validation?.isValid).toBe(true);
   });
 
-  it('should validate Pattern E question punctuation and starter', () => {
+  it('should validate Pattern E question punctuation and starter', async () => {
     component.selectPattern(component.patterns[4]);
     component.userInput = 'Could you repeat the question';
-    component.evaluateSentence();
+    await component.evaluateSentence();
     expect(component.validation?.isValid).toBe(false);
     expect(component.validation?.message).toContain('?');
 
     component.userInput = 'Could you repeat the question, please?';
-    component.evaluateSentence();
+    await component.evaluateSentence();
+    expect(component.validation?.isValid).toBe(true);
+  });
+
+  it('should not publish success feedback when storage persistence fails with quota error', async () => {
+    vi.spyOn(storage, 'saveAttempt').mockRejectedValue(new Error('QuotaExceededError'));
+    component.userInput = 'I develop scalable backend APIs';
+    await expect(component.evaluateSentence()).rejects.toThrow('QuotaExceededError');
+    expect(component.validation).toBeNull();
+  });
+
+  it('should await storage persistence before publishing validation feedback', async () => {
+    let resolveStorage!: (value: any) => void;
+    const storagePromise = new Promise<any>((resolve) => {
+      resolveStorage = resolve;
+    });
+    vi.spyOn(storage, 'saveAttempt').mockReturnValue(storagePromise);
+
+    component.userInput = 'I develop scalable backend APIs';
+    const evalPromise = component.evaluateSentence();
+
+    expect(component.validation).toBeNull();
+
+    resolveStorage({
+      id: 'test-id',
+      patternId: 'pattern-a',
+      userInput: component.userInput,
+      isValid: true,
+      feedback: 'ok',
+      timestamp: new Date().toISOString(),
+      syncStatus: 'pending',
+    });
+    await evalPromise;
+
     expect(component.validation?.isValid).toBe(true);
   });
 });

@@ -2,6 +2,7 @@ import { Injectable } from '@angular/core';
 import { generateUuidV4, isValidUuidV4 } from '../utils/uuid.util';
 import { MigrationManifest } from '../models/sync.model';
 import { PracticeAttempt, SessionSummary, ProgressEvaluation } from '../models/session.model';
+import { GUEST_STORAGE_LOCK, withStorageLock } from '../utils/storage-lock.util';
 
 export const STORAGE_VERSION_KEY = 'ecp_storage_version';
 export const MIGRATION_MANIFEST_KEY = 'ecp_migration_manifest';
@@ -30,7 +31,7 @@ export interface MigrationResult {
   providedIn: 'root',
 })
 export class StorageMigrationService {
-  migrate(): MigrationResult {
+  async migrate(): Promise<MigrationResult> {
     try {
       const currentVersion = localStorage.getItem(STORAGE_VERSION_KEY);
       const rawManifest = localStorage.getItem(MIGRATION_MANIFEST_KEY);
@@ -197,30 +198,33 @@ export class StorageMigrationService {
       };
       localStorage.setItem(MIGRATION_MANIFEST_KEY, JSON.stringify(verifiedManifest));
 
-      const existingGuestAttempts = this.safeParseArray(localStorage.getItem(GUEST_ATTEMPTS_KEY), []);
-      const existingGuestSessions = this.safeParseArray(localStorage.getItem(GUEST_SESSIONS_KEY), []);
+      let completedManifest: MigrationManifest;
+      await withStorageLock(GUEST_STORAGE_LOCK, async () => {
+        const existingGuestAttempts = this.safeParseArray(localStorage.getItem(GUEST_ATTEMPTS_KEY), []);
+        const existingGuestSessions = this.safeParseArray(localStorage.getItem(GUEST_SESSIONS_KEY), []);
 
-      const mergedAttempts = this.deduplicateById([...stagedAttempts, ...(existingGuestAttempts as PracticeAttempt[])]);
-      const mergedSessions = this.deduplicateById([...stagedSessions, ...(existingGuestSessions as SessionSummary[])]);
+        const mergedAttempts = this.deduplicateById([...stagedAttempts, ...(existingGuestAttempts as PracticeAttempt[])]);
+        const mergedSessions = this.deduplicateById([...stagedSessions, ...(existingGuestSessions as SessionSummary[])]);
 
-      localStorage.setItem(GUEST_ATTEMPTS_KEY, JSON.stringify(mergedAttempts));
-      localStorage.setItem(GUEST_SESSIONS_KEY, JSON.stringify(mergedSessions));
+        localStorage.setItem(GUEST_ATTEMPTS_KEY, JSON.stringify(mergedAttempts));
+        localStorage.setItem(GUEST_SESSIONS_KEY, JSON.stringify(mergedSessions));
 
-      this.cleanupStaging();
+        this.cleanupStaging();
 
-      const completedManifest: MigrationManifest = {
-        ...verifiedManifest,
-        status: 'completed',
-        attemptsCount: stagedAttempts.length,
-        sessionsCount: stagedSessions.length,
-      };
-      localStorage.setItem(STORAGE_VERSION_KEY, '1');
-      localStorage.setItem(MIGRATION_MANIFEST_KEY, JSON.stringify(completedManifest));
+        completedManifest = {
+          ...verifiedManifest,
+          status: 'completed',
+          attemptsCount: stagedAttempts.length,
+          sessionsCount: stagedSessions.length,
+        };
+        localStorage.setItem(STORAGE_VERSION_KEY, '1');
+        localStorage.setItem(MIGRATION_MANIFEST_KEY, JSON.stringify(completedManifest));
+      });
 
       return {
         success: true,
         status: 'completed',
-        manifest: completedManifest,
+        manifest: completedManifest!,
         migratedAttempts: stagedAttempts.length,
         migratedSessions: stagedSessions.length,
         corruptedCount: corruptedList.length,
